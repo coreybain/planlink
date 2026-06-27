@@ -91,3 +91,7 @@ bun test
 The npm tarball used for this port is kept under `downloads/` for reference.
 The new TypeScript implementation lives in `src/` and is the app code intended
 for ongoing Git-based development.
+
+## Credits
+
+PlanLink is based on the original [postplan npm package](https://www.npmjs.com/package/postplan) by [Theo](https://github.com/t3dotgg).
