@@ -49,6 +49,18 @@ bunx planlink upload <file path> --new
 
 PlanLink stores CLI auth and draft mappings in `~/.planlink`.
 
+## Draft Cleanup
+
+Use authenticated draft management when a user asks to list or remove PlanLink drafts:
+
+```sh
+bunx planlink drafts list
+bunx planlink drafts delete <draft-id> --yes
+bunx planlink drafts delete-all --yes
+```
+
+These commands require a configured API key and only affect drafts owned by that key's account.
+
 ## Viewer Behavior
 
 Public PlanLink URLs show the draft inside a sandboxed viewer. Signed-out viewers see a persistent PlanLink banner outside the uploaded document.

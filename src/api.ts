@@ -56,6 +56,21 @@ interface DraftVersionRow {
   original_filename: string | null;
 }
 
+interface DraftListRow {
+  id: string;
+  title: string;
+  repo_org: string | null;
+  repo_name: string | null;
+  created_at: Date;
+  updated_at: Date;
+  disabled_at: Date | null;
+  disabled_reason: string | null;
+  version_number: number | null;
+  file_size: number | null;
+  original_filename: string | null;
+  version_created_at: Date | null;
+}
+
 type JsonRecord = Record<string, unknown>;
 
 export function createApp(): express.Express {
@@ -326,10 +341,98 @@ export function createApp(): express.Express {
     }
   );
 
+  app.get("/api/drafts", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const result = await pool.query<DraftListRow>(
+        `
+          SELECT
+            drafts.id,
+            drafts.title,
+            drafts.repo_org,
+            drafts.repo_name,
+            drafts.created_at,
+            drafts.updated_at,
+            drafts.disabled_at,
+            drafts.disabled_reason,
+            draft_versions.version_number,
+            draft_versions.file_size,
+            draft_versions.original_filename,
+            draft_versions.created_at AS version_created_at
+          FROM drafts
+          LEFT JOIN draft_versions ON draft_versions.id = drafts.current_version_id
+          WHERE drafts.account_id = $1
+            AND drafts.deleted_at IS NULL
+          ORDER BY drafts.updated_at DESC
+        `,
+        [auth.account_id]
+      );
+
+      res.json({
+        ok: true,
+        drafts: result.rows.map((draft) => ({
+          draftId: draft.id,
+          title: draft.title,
+          publicUrl: getDraftPublicUrl({
+            draftId: draft.id,
+            publicBaseUrl: config.publicBaseUrl,
+            requestBaseUrl: getRequestBaseUrl(req)
+          }),
+          versionNumber: draft.version_number,
+          fileSize: draft.file_size,
+          originalFilename: draft.original_filename,
+          repoOrg: draft.repo_org,
+          repoName: draft.repo_name,
+          createdAt: draft.created_at,
+          updatedAt: draft.updated_at,
+          versionCreatedAt: draft.version_created_at,
+          disabledAt: draft.disabled_at,
+          disabledReason: draft.disabled_reason
+        }))
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/drafts", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const body = isRecord(req.body) ? req.body : {};
+
+      if (body.confirm !== "delete-all") {
+        res.status(400).json({
+          ok: false,
+          error: 'Missing confirmation. Send {"confirm":"delete-all"}.'
+        });
+        return;
+      }
+
+      const result = await pool.query<{ id: string }>(
+        `
+          UPDATE drafts
+          SET deleted_at = now(), updated_at = now()
+          WHERE account_id = $1
+            AND deleted_at IS NULL
+          RETURNING id
+        `,
+        [auth.account_id]
+      );
+
+      res.json({
+        ok: true,
+        deletedCount: result.rowCount || 0,
+        draftIds: result.rows.map((draft) => draft.id)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.delete("/api/drafts/:draftId", requireAuth, async (req, res, next) => {
     try {
       const auth = (req as RequestWithAuth).auth;
-      const result = await pool.query(
+      const result = await pool.query<{ id: string }>(
         `
           UPDATE drafts
           SET deleted_at = now(), updated_at = now()
@@ -346,7 +449,7 @@ export function createApp(): express.Express {
         return;
       }
 
-      res.json({ ok: true });
+      res.json({ ok: true, draftId: result.rows[0].id });
     } catch (error) {
       next(error);
     }

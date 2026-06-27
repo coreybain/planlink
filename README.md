@@ -50,6 +50,17 @@ bunx planlink upload ./plan.html
 By default the CLI uploads to `https://planlink.spiritdevs.com`. Use `--api-url`
 or `PLANLINK_API_URL` to point the CLI at another PlanLink deployment.
 
+Manage drafts uploaded with the configured API key:
+
+```sh
+bunx planlink drafts list
+bunx planlink drafts delete <draft-id> --yes
+bunx planlink drafts delete-all --yes
+```
+
+Draft management requires `planlink auth set <api-key>` and only applies to
+drafts owned by that key's account.
+
 ## Service
 
 Required service variables:

@@ -7,7 +7,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { validateHtml } from "../html-policy.js";
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 const DEFAULT_API_URL = "https://planlink.spiritdevs.com";
 const PLANLINK_DIR = path.join(os.homedir(), ".planlink");
 const CONFIG_PATH = path.join(PLANLINK_DIR, "config.json");
@@ -56,6 +56,35 @@ interface UploadResponse {
   warnings?: unknown;
   error?: unknown;
   errors?: unknown;
+}
+
+interface DraftSummary {
+  draftId: string;
+  title: string;
+  publicUrl: string;
+  versionNumber: number | null;
+  fileSize: number | null;
+  originalFilename: string | null;
+  repoOrg: string | null;
+  repoName: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  disabledAt: string | null;
+  disabledReason: string | null;
+}
+
+interface DraftListResponse {
+  ok?: boolean;
+  drafts?: unknown;
+  error?: unknown;
+}
+
+interface DeleteDraftResponse {
+  ok?: boolean;
+  draftId?: unknown;
+  draftIds?: unknown;
+  deletedCount?: unknown;
+  error?: unknown;
 }
 
 const program = new Command();
@@ -200,6 +229,100 @@ program
     }
   });
 
+const draftsCommand = program
+  .command("drafts")
+  .description("List and delete drafts owned by the configured API key.");
+
+draftsCommand
+  .command("list")
+  .description("List drafts owned by the configured API key.")
+  .option("--api-url <url>", "Override the default PlanLink API base URL")
+  .action(async (options: { apiUrl?: string }) => {
+    const { apiUrl, apiKey } = readAuth(options.apiUrl);
+    const { body } = await requestJson<DraftListResponse>(`${apiUrl}/api/drafts`, {
+      headers: authHeaders(apiKey)
+    });
+
+    const drafts = requireDraftSummaries(body.drafts);
+    if (!drafts.length) {
+      console.log("No drafts found.");
+      return;
+    }
+
+    for (const draft of drafts) {
+      const version = draft.versionNumber ? `v${draft.versionNumber}` : "v-";
+      const updated = draft.updatedAt || "unknown-date";
+      const status = draft.disabledAt ? " disabled" : "";
+      const repo = [draft.repoOrg, draft.repoName].filter(Boolean).join("/");
+      const suffix = repo ? ` (${repo})` : "";
+
+      console.log(`${draft.draftId} ${version} ${updated}${status} ${draft.title}${suffix}`);
+      console.log(`  ${draft.publicUrl}`);
+      if (draft.originalFilename) {
+        console.log(`  file: ${draft.originalFilename}`);
+      }
+      if (draft.disabledReason) {
+        console.log(`  disabled: ${draft.disabledReason}`);
+      }
+    }
+  });
+
+draftsCommand
+  .command("delete")
+  .alias("rm")
+  .argument("<draft-id>", "Draft ID to delete")
+  .description("Delete one draft owned by the configured API key.")
+  .option("--yes", "Confirm deletion")
+  .option("--api-url <url>", "Override the default PlanLink API base URL")
+  .action(async (draftId: string, options: { yes?: boolean; apiUrl?: string }) => {
+    requireConfirmation(options.yes, `Refusing to delete ${draftId} without confirmation.`);
+
+    const { apiUrl, apiKey } = readAuth(options.apiUrl);
+    const { body } = await requestJson<DeleteDraftResponse>(
+      `${apiUrl}/api/drafts/${encodeURIComponent(draftId)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(apiKey)
+      }
+    );
+
+    const deletedDraftId = requireString(body.draftId, "Delete response did not include draftId.");
+    const removedMappings = removeLocalDraftMappings([deletedDraftId]);
+    console.log(`Deleted draft ${deletedDraftId}.`);
+    if (removedMappings) {
+      console.log(`Removed ${removedMappings} local draft mapping${removedMappings === 1 ? "" : "s"}.`);
+    }
+  });
+
+draftsCommand
+  .command("delete-all")
+  .alias("clear")
+  .description("Delete all drafts owned by the configured API key.")
+  .option("--yes", "Confirm deletion")
+  .option("--api-url <url>", "Override the default PlanLink API base URL")
+  .action(async (options: { yes?: boolean; apiUrl?: string }) => {
+    requireConfirmation(options.yes, "Refusing to delete all drafts without confirmation.");
+
+    const { apiUrl, apiKey } = readAuth(options.apiUrl);
+    const { body } = await requestJson<DeleteDraftResponse>(`${apiUrl}/api/drafts`, {
+      method: "DELETE",
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ confirm: "delete-all" })
+    });
+
+    const draftIds = requireStringArray(body.draftIds, "Delete response did not include draftIds.");
+    const deletedCount = requireNumber(
+      body.deletedCount,
+      "Delete response did not include deletedCount."
+    );
+    const removedMappings = removeLocalDraftMappings(draftIds);
+
+    console.log(`Deleted ${deletedCount} draft${deletedCount === 1 ? "" : "s"}.`);
+    if (removedMappings) {
+      console.log(`Removed ${removedMappings} local draft mapping${removedMappings === 1 ? "" : "s"}.`);
+    }
+  });
+
 program.exitOverride();
 
 program.parseAsync(process.argv).catch((error: unknown) => {
@@ -245,6 +368,101 @@ function ensureStateDir(): void {
 
 function readDrafts(): DraftsState {
   return readJson<DraftsState>(DRAFTS_PATH, { files: {} });
+}
+
+function removeLocalDraftMappings(draftIds: string[]): number {
+  const idSet = new Set(draftIds);
+  const drafts = readDrafts();
+  let removed = 0;
+
+  for (const [file, draft] of Object.entries(drafts.files || {})) {
+    if (idSet.has(draft.draftId)) {
+      delete drafts.files[file];
+      removed += 1;
+    }
+  }
+
+  if (removed) {
+    writeJson<DraftsState>(DRAFTS_PATH, drafts, 0o600);
+  }
+
+  return removed;
+}
+
+function requireConfirmation(confirmed: boolean | undefined, message: string): void {
+  if (!confirmed) {
+    throw new CliError(`${message} Re-run with --yes.`);
+  }
+}
+
+function authHeaders(apiKey: string | undefined): Record<string, string> {
+  if (!apiKey) {
+    throw new CliError("Missing API key. Run: planlink auth set <api-key>");
+  }
+
+  return {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "User-Agent": `planlink/${VERSION}`
+  };
+}
+
+async function requestJson<T>(
+  url: string,
+  init: RequestInit
+): Promise<{ response: Response; body: T }> {
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : "";
+    throw new CliError(`Unable to connect to ${url}.${detail}`);
+  }
+
+  const text = await response.text();
+  const body = parseJson<T>(text);
+
+  if (!response.ok) {
+    const error = isRecord(body) ? asString(body.error) : null;
+    throw new CliError(error || `Request failed with status ${response.status}.`);
+  }
+
+  return { response, body };
+}
+
+function parseJson<T>(text: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new CliError("PlanLink returned an invalid JSON response.");
+  }
+}
+
+function requireDraftSummaries(value: unknown): DraftSummary[] {
+  if (!Array.isArray(value)) {
+    throw new CliError("Draft list response did not include drafts.");
+  }
+
+  return value.map((draft) => {
+    if (!isRecord(draft)) {
+      throw new CliError("Draft list response included an invalid draft.");
+    }
+
+    return {
+      draftId: requireString(draft.draftId, "Draft response did not include draftId."),
+      title: requireString(draft.title, "Draft response did not include title."),
+      publicUrl: requireString(draft.publicUrl, "Draft response did not include publicUrl."),
+      versionNumber: optionalNumber(draft.versionNumber),
+      fileSize: optionalNumber(draft.fileSize),
+      originalFilename: optionalString(draft.originalFilename),
+      repoOrg: optionalString(draft.repoOrg),
+      repoName: optionalString(draft.repoName),
+      createdAt: optionalString(draft.createdAt),
+      updatedAt: optionalString(draft.updatedAt),
+      disabledAt: optionalString(draft.disabledAt),
+      disabledReason: optionalString(draft.disabledReason)
+    };
+  });
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -326,6 +544,10 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
 function requireString(value: unknown, message: string): string {
   const stringValue = asString(value);
   if (!stringValue) throw new CliError(message);
@@ -336,4 +558,24 @@ function requireNumber(value: unknown, message: string): number {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim()) return Number(value);
   throw new CliError(message);
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function requireStringArray(value: unknown, message: string): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new CliError(message);
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

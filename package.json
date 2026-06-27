@@ -1,6 +1,6 @@
 {
   "name": "planlink",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Static HTML draft publishing for agents.",
   "type": "module",
   "private": false,
