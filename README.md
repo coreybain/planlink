@@ -41,6 +41,12 @@ bun run cli auth set <api-key> --api-url http://localhost:3000
 
 The CLI stores optional credentials and draft mappings in `~/.planlink`.
 
+Once published, the package can also be run directly:
+
+```sh
+bunx planlink upload ./plan.html --api-url https://your-planlink-service.example
+```
+
 ## Service
 
 Required service variables:
@@ -77,6 +83,12 @@ Development mode:
 ```sh
 bun run dev
 ```
+
+## Railway
+
+PlanLink is ready for Railway using the included `railway.json` and
+`nixpacks.toml` files. The service still needs Railway Postgres and a Railway
+Storage Bucket wired through the required environment variables above.
 
 ## Scripts
 
