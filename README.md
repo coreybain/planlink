@@ -47,7 +47,8 @@ Once published, the package can also be run directly:
 bunx planlink upload ./plan.html
 ```
 
-Use `--api-url` or `PLANLINK_API_URL` to point the CLI at a custom PlanLink deployment.
+By default the CLI uploads to `https://planlink.spiritdevs.com`. Use `--api-url`
+or `PLANLINK_API_URL` to point the CLI at another PlanLink deployment.
 
 ## Service
 
