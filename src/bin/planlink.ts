@@ -7,8 +7,8 @@ import path from "node:path";
 import { Command } from "commander";
 import { validateHtml } from "../html-policy.js";
 
-const VERSION = "0.1.0";
-const DEFAULT_API_URL = "https://planlink.dev";
+const VERSION = "0.1.1";
+const DEFAULT_API_URL = "https://planlink-production.up.railway.app";
 const PLANLINK_DIR = path.join(os.homedir(), ".planlink");
 const CONFIG_PATH = path.join(PLANLINK_DIR, "config.json");
 const CREDENTIALS_PATH = path.join(PLANLINK_DIR, "credentials.json");

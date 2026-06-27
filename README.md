@@ -44,8 +44,10 @@ The CLI stores optional credentials and draft mappings in `~/.planlink`.
 Once published, the package can also be run directly:
 
 ```sh
-bunx planlink upload ./plan.html --api-url https://your-planlink-service.example
+bunx planlink upload ./plan.html
 ```
+
+Use `--api-url` or `PLANLINK_API_URL` to point the CLI at a custom PlanLink deployment.
 
 ## Service
 
