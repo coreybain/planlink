@@ -25,6 +25,7 @@ export interface DraftReviewRenderData {
   currentVersionNumber: number;
   selectedVersionNumber: number;
   canEdit: boolean;
+  narration: DraftNarrationSection[];
   questions: DraftReviewQuestion[];
 }
 
@@ -54,6 +55,13 @@ export interface DraftReviewAnswer {
   versionId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DraftNarrationSection {
+  narrationId: string;
+  title: string;
+  text: string;
+  source: "explicit" | "section";
 }
 
 export interface AiPromptInput {
@@ -282,6 +290,7 @@ export function renderDraftWrapper({
     }
 
     .review-auth,
+    .narration-tools,
     .question-composer {
       display: flex;
       flex-direction: column;
@@ -290,8 +299,53 @@ export function renderDraftWrapper({
     }
 
     .review-input,
+    .narration-select,
     .review-textarea {
       width: 100%;
+    }
+
+    .narration-label {
+      display: grid;
+      gap: 6px;
+      color: #41514a;
+      font-size: 13px;
+    }
+
+    .narration-select {
+      border: 1px solid #bcc9bf;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #17201b;
+      min-height: 34px;
+      padding: 6px 8px;
+      box-sizing: border-box;
+    }
+
+    .narration-controls {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .tts-button {
+      min-height: 32px;
+      border: 1px solid #bcc9bf;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #17201b;
+      padding: 6px 8px;
+      text-align: center;
+    }
+
+    .tts-button.primary {
+      background: #174c43;
+      border-color: #174c43;
+      color: #ffffff;
+    }
+
+    .tts-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
     }
 
     .review-textarea {
@@ -393,6 +447,21 @@ export function renderDraftWrapper({
     </div>
     <div class="review-body" id="review-body" hidden>
       <div class="review-tools">
+        <div class="narration-tools" id="narration-tools">
+          <label class="narration-label">
+            <span>Audio run-through</span>
+            <select class="narration-select" id="narration-select">
+              ${renderNarrationOptions(reviewData.narration)}
+            </select>
+          </label>
+          <div class="narration-controls">
+            <button class="tts-button primary" id="tts-listen" type="button">Listen</button>
+            <button class="tts-button" id="tts-pause" type="button">Pause</button>
+            <button class="tts-button" id="tts-resume" type="button">Resume</button>
+            <button class="tts-button" id="tts-stop" type="button">Stop</button>
+          </div>
+          <p class="review-empty" id="narration-note"></p>
+        </div>
         <div class="review-auth" id="review-auth">
           <input class="review-input" id="owner-key" type="password" placeholder="Owner API key" autocomplete="off">
           <button class="review-action" id="owner-unlock" type="button">Unlock owner mode</button>
@@ -424,6 +493,13 @@ export function renderDraftWrapper({
       var questionText = document.getElementById("question-text");
       var questionSave = document.getElementById("question-save");
       var questionList = document.getElementById("question-list");
+      var narrationSelect = document.getElementById("narration-select");
+      var narrationNote = document.getElementById("narration-note");
+      var ttsListen = document.getElementById("tts-listen");
+      var ttsPause = document.getElementById("tts-pause");
+      var ttsResume = document.getElementById("tts-resume");
+      var ttsStop = document.getElementById("tts-stop");
+      var activeUtterance = null;
 
       function getOwnerKey() {
         try {
@@ -468,6 +544,7 @@ export function renderDraftWrapper({
           currentVersionNumber: body.currentVersionNumber,
           selectedVersionNumber: body.selectedVersionNumber,
           canEdit: Boolean(body.canEdit),
+          narration: body.narration || state.narration || [],
           questions: body.questions || []
         };
         renderReview();
@@ -501,6 +578,7 @@ export function renderDraftWrapper({
         composer.hidden = !state.canEdit;
         ownerLock.hidden = !state.canEdit;
         setStatus(state.canEdit ? "Owner mode" : "v" + (version ? version.versionNumber : state.selectedVersionNumber));
+        renderNarration();
 
         questionList.textContent = "";
         if (!state.questions.length) {
@@ -588,6 +666,90 @@ export function renderDraftWrapper({
         return article;
       }
 
+      function renderNarration() {
+        var supported = canSpeak();
+        var items = state.narration || [];
+        narrationSelect.textContent = "";
+
+        if (!items.length) {
+          var option = document.createElement("option");
+          option.value = "";
+          option.textContent = "No narrated sections";
+          narrationSelect.appendChild(option);
+          setTtsDisabled(true);
+          narrationNote.textContent = supported
+            ? "This draft does not include narrated section notes yet."
+            : "Text-to-speech is not available in this browser.";
+          return;
+        }
+
+        items.forEach(function (item) {
+          var option = document.createElement("option");
+          option.value = item.narrationId;
+          option.textContent = item.title + (item.source === "section" ? " (auto)" : "");
+          narrationSelect.appendChild(option);
+        });
+
+        setTtsDisabled(!supported);
+        narrationNote.textContent = supported
+          ? "Chrome can read the selected section aloud."
+          : "Text-to-speech is not available in this browser.";
+      }
+
+      function setTtsDisabled(disabled) {
+        ttsListen.disabled = disabled;
+        ttsPause.disabled = disabled;
+        ttsResume.disabled = disabled;
+        ttsStop.disabled = disabled;
+        narrationSelect.disabled = disabled || !(state.narration || []).length;
+      }
+
+      function selectedNarration() {
+        var items = state.narration || [];
+        return items.find(function (item) { return item.narrationId === narrationSelect.value; }) || items[0];
+      }
+
+      function canSpeak() {
+        return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+      }
+
+      function stopSpeech() {
+        if (!canSpeak()) return;
+        window.speechSynthesis.cancel();
+        activeUtterance = null;
+      }
+
+      function speakSelectedNarration() {
+        if (!canSpeak()) {
+          narrationNote.textContent = "Text-to-speech is not available in this browser.";
+          return;
+        }
+
+        var item = selectedNarration();
+        if (!item) {
+          narrationNote.textContent = "No narrated section selected.";
+          return;
+        }
+
+        stopSpeech();
+        var utterance = new SpeechSynthesisUtterance(item.text);
+        utterance.lang = navigator.language || "en-AU";
+        utterance.rate = 0.96;
+        utterance.pitch = 1;
+        utterance.onend = function () {
+          activeUtterance = null;
+          narrationNote.textContent = "Finished " + item.title + ".";
+        };
+        utterance.onerror = function () {
+          activeUtterance = null;
+          narrationNote.textContent = "Could not read this section.";
+        };
+        activeUtterance = utterance;
+        window.speechSynthesis.speak(utterance);
+        narrationNote.textContent = "Reading " + item.title + ".";
+        setStatus("Reading section");
+      }
+
       function buildPrompt(question) {
         var version = selectedVersion();
         return [
@@ -630,8 +792,26 @@ export function renderDraftWrapper({
       });
 
       versionSelect.addEventListener("change", function () {
+        stopSpeech();
         window.location.href = versionSelect.value;
       });
+
+      ttsListen.addEventListener("click", speakSelectedNarration);
+      ttsPause.addEventListener("click", function () {
+        if (!canSpeak()) return;
+        window.speechSynthesis.pause();
+        narrationNote.textContent = "Paused.";
+      });
+      ttsResume.addEventListener("click", function () {
+        if (!canSpeak()) return;
+        window.speechSynthesis.resume();
+        narrationNote.textContent = activeUtterance ? "Reading resumed." : "Nothing is queued.";
+      });
+      ttsStop.addEventListener("click", function () {
+        stopSpeech();
+        narrationNote.textContent = "Stopped.";
+      });
+      narrationSelect.addEventListener("change", stopSpeech);
 
       ownerUnlock.addEventListener("click", async function () {
         var token = ownerInput.value.trim();
@@ -769,8 +949,20 @@ function defaultReviewData(
     currentVersionNumber: versionNumber,
     selectedVersionNumber: versionNumber,
     canEdit: false,
+    narration: [],
     questions: []
   };
+}
+
+function renderNarrationOptions(sections: DraftNarrationSection[]): string {
+  if (!sections.length) {
+    return '<option value="">No narrated sections</option>';
+  }
+
+  return sections.map((section) => `
+              <option value="${escapeAttribute(section.narrationId)}">
+                ${escapeHtml(section.title)}${section.source === "section" ? " (auto)" : ""}
+              </option>`).join("");
 }
 
 function htmlPage({ title, body }: { title: string; body: string }): string {

@@ -14,6 +14,7 @@ import { renderDraftWrapper, renderHome, renderNotFound } from "./render.js";
 import { createRateLimiter } from "./rate-limit.js";
 import { getHtmlObject, putHtmlObject } from "./storage.js";
 import { validateHtml } from "./html-policy.js";
+import { extractNarrationSections, type NarrationSection } from "./narration.js";
 import {
   getDraftIdFromHost,
   getDraftPublicUrl,
@@ -127,6 +128,7 @@ interface DraftViewerData {
   currentVersionNumber: number;
   selectedVersionNumber: number;
   canEdit: boolean;
+  narration: NarrationSection[];
   questions: Array<{
     questionId: string;
     questionText: string;
@@ -471,7 +473,7 @@ export function createApp(): express.Express {
     try {
       const versionNumber = parseOptionalVersionNumber(req.query.versionNumber);
       const auth = await optionalAuth(req);
-      const { viewer } = await findPublicDraftData(
+      const { version, viewer } = await findPublicDraftData(
         req,
         routeParam(req.params.draftId),
         versionNumber,
@@ -481,6 +483,11 @@ export function createApp(): express.Express {
       if (!viewer) {
         res.status(404).json({ ok: false, error: "Draft not found." });
         return;
+      }
+
+      if (version) {
+        const html = await getHtmlObject(version.object_key);
+        viewer.narration = extractNarrationSections(html);
       }
 
       res.json({ ok: true, ...viewer });
@@ -744,6 +751,7 @@ async function renderDraft(
   }
 
   const html = await getHtmlObject(version.object_key);
+  viewer.narration = extractNarrationSections(html);
 
   res.setHeader(
     "Content-Security-Policy",
@@ -839,6 +847,7 @@ async function findPublicDraftData(
     currentVersionNumber: currentVersion.version_number,
     selectedVersionNumber: version.version_number,
     canEdit: auth?.account_id === draft.account_id,
+    narration: [],
     questions
   };
 

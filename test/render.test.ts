@@ -31,6 +31,10 @@ test("renders review Q&A and version controls outside the sandboxed iframe", () 
   assert.match(rendered, /id="review-version-select"/);
   assert.match(rendered, /Copy AI prompt/);
   assert.match(rendered, /Save answer/);
+  assert.match(rendered, /Audio run-through/);
+  assert.match(rendered, /id="narration-select"/);
+  assert.match(rendered, /Listen/);
+  assert.match(rendered, /"narrationId":"narration-1"/);
   assert.match(rendered, /"selectedVersionNumber":2/);
   assert.match(rendered, /"versionNumber":2/);
   assert.match(rendered, /"versionNumber":1/);
@@ -100,6 +104,14 @@ function reviewFixture(): DraftReviewRenderData {
     currentVersionNumber: 2,
     selectedVersionNumber: 2,
     canEdit: true,
+    narration: [
+      {
+        narrationId: "narration-1",
+        title: "Data Model",
+        text: "This section explains the model choices in a listener-friendly way.",
+        source: "explicit"
+      }
+    ],
     questions: [
       {
         questionId: "question_1",

@@ -11,6 +11,7 @@ The app keeps the original behavior:
 - Store HTML documents in S3-compatible object storage.
 - Render public drafts inside a sandboxed iframe.
 - Show draft versions and review Q&A outside the sandboxed iframe.
+- Read section run-throughs aloud in Chrome with browser-native text-to-speech.
 - Support optional API keys for admin and authenticated ownership flows.
 
 ## CLI
@@ -72,6 +73,23 @@ Owners can unlock editing in the review panel with their PlanLink API key. Owner
 mode can add questions and save plain-text answers against the selected plan
 version. Re-uploading the same local HTML file updates the existing draft and
 creates a new version; use `--new` when you want a separate draft instead.
+
+## Audio Run-Throughs
+
+PlanLink extracts narrated section notes from static HTML and exposes them in
+the bottom panel. In Chrome, the panel can read the selected section aloud using
+the browser's built-in `speechSynthesis` API.
+
+For best results, add an `aside` at the bottom of each plan section:
+
+```html
+<aside data-planlink-narration>
+  A detailed listener-friendly explanation of this section.
+</aside>
+```
+
+If a draft does not include explicit narration blocks, PlanLink falls back to
+the visible heading text and section body.
 
 ## Service
 

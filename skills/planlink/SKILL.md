@@ -18,6 +18,7 @@ Allowed:
 - Normal document metadata such as charset, viewport, and title.
 - Links to ordinary HTTPS pages.
 - Images from HTTPS or data URLs when necessary.
+- Static section narration in `<aside data-planlink-narration>...</aside>`.
 
 Do not include:
 
@@ -66,3 +67,16 @@ These commands require a configured API key and only affect drafts owned by that
 Public PlanLink URLs show the draft inside a sandboxed viewer. Signed-out viewers see a persistent PlanLink banner outside the uploaded document.
 
 Each draft also includes a bottom review panel. Viewers can switch between versions, read saved questions and answers, and copy an AI-ready prompt for any question. Owners can unlock the panel with a PlanLink API key, add questions, and save plain-text answers against the selected version.
+
+## Audio Run-Throughs
+
+When creating plans, add a listener-friendly run-through at the bottom of every major section:
+
+```html
+<aside data-planlink-narration>
+  Explain the section in plain language, including the intent, key tradeoffs,
+  and any important details that are easier to absorb by listening.
+</aside>
+```
+
+The narration must be static HTML text, not JavaScript. PlanLink extracts these blocks and exposes Listen/Pause/Resume/Stop controls in the bottom panel through the browser's text-to-speech support.

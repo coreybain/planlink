@@ -7,7 +7,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { validateHtml } from "../html-policy.js";
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 const DEFAULT_API_URL = "https://planlink.spiritdevs.com";
 const PLANLINK_DIR = path.join(os.homedir(), ".planlink");
 const CONFIG_PATH = path.join(PLANLINK_DIR, "config.json");
