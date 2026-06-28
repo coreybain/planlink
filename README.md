@@ -10,6 +10,7 @@ The app keeps the original behavior:
 - Store draft metadata and versions in Postgres.
 - Store HTML documents in S3-compatible object storage.
 - Render public drafts inside a sandboxed iframe.
+- Show draft versions and review Q&A outside the sandboxed iframe.
 - Support optional API keys for admin and authenticated ownership flows.
 
 ## CLI
@@ -60,6 +61,17 @@ bunx planlink drafts delete-all --yes
 
 Draft management requires `planlink auth set <api-key>` and only applies to
 drafts owned by that key's account.
+
+## Review Q&A
+
+Every public draft includes a bottom review panel. Viewers can switch between
+saved plan versions, read questions and answers, and copy an AI-ready prompt for
+any question.
+
+Owners can unlock editing in the review panel with their PlanLink API key. Owner
+mode can add questions and save plain-text answers against the selected plan
+version. Re-uploading the same local HTML file updates the existing draft and
+creates a new version; use `--new` when you want a separate draft instead.
 
 ## Service
 

@@ -71,6 +71,78 @@ interface DraftListRow {
   version_created_at: Date | null;
 }
 
+interface DraftQuestionRow {
+  id: string;
+  draft_id: string;
+  question_text: string;
+  created_by_api_key_id: string;
+  created_at: Date;
+  updated_at: Date;
+  deleted_at: Date | null;
+}
+
+interface DraftQuestionAnswerRow {
+  id: string;
+  question_id: string;
+  draft_version_id: string;
+  answer_text: string;
+  created_by_api_key_id: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface DraftQuestionListRow {
+  id: string;
+  question_text: string;
+  created_at: Date;
+  updated_at: Date;
+  answer_id: string | null;
+  answer_text: string | null;
+  answer_created_at: Date | null;
+  answer_updated_at: Date | null;
+  answer_version_number: number | null;
+  answer_version_id: string | null;
+}
+
+interface DraftViewerData {
+  draft: {
+    draftId: string;
+    title: string;
+    publicUrl: string;
+    repoOrg: string | null;
+    repoName: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  versions: Array<{
+    versionId: string;
+    versionNumber: number;
+    versionUrl: string;
+    fileSize: number;
+    originalFilename: string | null;
+    createdAt: string;
+    isCurrent: boolean;
+    isSelected: boolean;
+  }>;
+  currentVersionNumber: number;
+  selectedVersionNumber: number;
+  canEdit: boolean;
+  questions: Array<{
+    questionId: string;
+    questionText: string;
+    createdAt: string;
+    updatedAt: string;
+    answer: {
+      answerId: string;
+      answerText: string;
+      versionNumber: number;
+      versionId: string;
+      createdAt: string;
+      updatedAt: string;
+    } | null;
+  }>;
+}
+
 type JsonRecord = Record<string, unknown>;
 
 export function createApp(): express.Express {
@@ -395,6 +467,28 @@ export function createApp(): express.Express {
     }
   });
 
+  app.get("/api/drafts/:draftId", async (req, res, next) => {
+    try {
+      const versionNumber = parseOptionalVersionNumber(req.query.versionNumber);
+      const auth = await optionalAuth(req);
+      const { viewer } = await findPublicDraftData(
+        req,
+        routeParam(req.params.draftId),
+        versionNumber,
+        auth
+      );
+
+      if (!viewer) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      res.json({ ok: true, ...viewer });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.delete("/api/drafts", requireAuth, async (req, res, next) => {
     try {
       const auth = (req as RequestWithAuth).auth;
@@ -450,6 +544,105 @@ export function createApp(): express.Express {
       }
 
       res.json({ ok: true, draftId: result.rows[0].id });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/drafts/:draftId/questions", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const questionText = cleanBodyText(isRecord(req.body) ? req.body.questionText : null, 4000);
+
+      if (!questionText) {
+        res.status(400).json({ ok: false, error: "Question is required." });
+        return;
+      }
+
+      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const questionId = newInternalId();
+      const result = await pool.query<DraftQuestionRow>(
+        `
+          INSERT INTO draft_questions (id, draft_id, question_text, created_by_api_key_id)
+          VALUES ($1, $2, $3, $4)
+          RETURNING *
+        `,
+        [questionId, draft.id, questionText, auth.id]
+      );
+
+      res.status(201).json({
+        ok: true,
+        question: questionToApi(result.rows[0], null)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/drafts/:draftId/questions/:questionId/answers", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const questionId = routeParam(req.params.questionId);
+      const body = isRecord(req.body) ? req.body : {};
+      const answerText = cleanBodyText(body.answerText, 20_000);
+      const versionNumber = parseRequiredVersionNumber(body.versionNumber);
+
+      if (!answerText) {
+        res.status(400).json({ ok: false, error: "Answer is required." });
+        return;
+      }
+
+      if (!versionNumber) {
+        res.status(400).json({ ok: false, error: "A valid versionNumber is required." });
+        return;
+      }
+
+      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const question = await findDraftQuestion(questionId, draft.id);
+      if (!question) {
+        res.status(404).json({ ok: false, error: "Question not found." });
+        return;
+      }
+
+      const version = await findDraftVersionByNumber(draft.id, versionNumber);
+      if (!version) {
+        res.status(404).json({ ok: false, error: "Draft version not found." });
+        return;
+      }
+
+      const answerId = newInternalId();
+      const answerResult = await pool.query<DraftQuestionAnswerRow>(
+        `
+          INSERT INTO draft_question_answers (
+            id, question_id, draft_version_id, answer_text, created_by_api_key_id
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (question_id) DO UPDATE
+            SET draft_version_id = EXCLUDED.draft_version_id,
+                answer_text = EXCLUDED.answer_text,
+                created_by_api_key_id = EXCLUDED.created_by_api_key_id,
+                updated_at = now()
+          RETURNING *
+        `,
+        [answerId, question.id, version.id, answerText, auth.id]
+      );
+
+      res.json({
+        ok: true,
+        answer: answerToApi(answerResult.rows[0], version.version_number)
+      });
     } catch (error) {
       next(error);
     }
@@ -543,19 +736,21 @@ async function renderDraft(
   res: Response,
   { draftId, versionNumber }: { draftId: string; versionNumber?: number }
 ): Promise<void> {
-  const { draft, version } = await findPublicDraftVersion(draftId, versionNumber);
-  if (!draft || !version) {
+  const auth = await optionalAuth(req);
+  const { draft, version, viewer } = await findPublicDraftData(req, draftId, versionNumber, auth);
+  if (!draft || !version || !viewer) {
     res.status(404).type("html").send(renderNotFound());
     return;
   }
 
   const html = await getHtmlObject(version.object_key);
-  const signedIn = Boolean(await optionalAuth(req));
 
   res.setHeader(
     "Content-Security-Policy",
     [
       "default-src 'none'",
+      "script-src 'unsafe-inline'",
+      "connect-src 'self'",
       "style-src 'unsafe-inline'",
       "img-src https: data:",
       "frame-src 'self' about:",
@@ -568,16 +763,19 @@ async function renderDraft(
       draft,
       version,
       html,
-      signedIn,
-      homeUrl: getHomeUrlForRequest(req)
+      signedIn: Boolean(auth),
+      homeUrl: getHomeUrlForRequest(req),
+      review: viewer
     })
   );
 }
 
-async function findPublicDraftVersion(
+async function findPublicDraftData(
+  req: Request,
   draftId: string,
-  versionNumber?: number
-): Promise<{ draft: DraftRow | null; version: DraftVersionRow | null }> {
+  versionNumber: number | undefined,
+  auth: ApiKeyAuth | null
+): Promise<{ draft: DraftRow | null; version: DraftVersionRow | null; viewer: DraftViewerData | null }> {
   const draftResult = await pool.query<DraftRow>(
     `
       SELECT *
@@ -591,23 +789,136 @@ async function findPublicDraftVersion(
   );
 
   const draft = draftResult.rows[0] || null;
-  if (!draft) return { draft: null, version: null };
+  if (!draft) return { draft: null, version: null, viewer: null };
 
-  const versionResult = versionNumber
-    ? await pool.query<DraftVersionRow>(
-        `
-          SELECT *
-          FROM draft_versions
-          WHERE draft_id = $1 AND version_number = $2
-          LIMIT 1
-        `,
-        [draft.id, versionNumber]
-      )
-    : await pool.query<DraftVersionRow>("SELECT * FROM draft_versions WHERE id = $1 LIMIT 1", [
-        draft.current_version_id
-      ]);
+  const versionsResult = await pool.query<DraftVersionRow>(
+    `
+      SELECT *
+      FROM draft_versions
+      WHERE draft_id = $1
+      ORDER BY version_number DESC
+    `,
+    [draft.id]
+  );
+  const versions = versionsResult.rows;
+  const currentVersion = versions.find((candidate) => candidate.id === draft.current_version_id);
+  const version = versionNumber
+    ? versions.find((candidate) => candidate.version_number === versionNumber) || null
+    : currentVersion || null;
 
-  return { draft, version: versionResult.rows[0] || null };
+  if (!version || !currentVersion) {
+    return { draft, version: null, viewer: null };
+  }
+
+  const publicUrl = getDraftPublicUrl({
+    draftId: draft.id,
+    publicBaseUrl: config.publicBaseUrl,
+    requestBaseUrl: getRequestBaseUrl(req)
+  });
+  const questions = await listDraftQuestions(draft.id);
+  const viewer: DraftViewerData = {
+    draft: {
+      draftId: draft.id,
+      title: draft.title,
+      publicUrl,
+      repoOrg: draft.repo_org,
+      repoName: draft.repo_name,
+      createdAt: toIso(draft.created_at),
+      updatedAt: toIso(draft.updated_at)
+    },
+    versions: versions.map((candidate) => ({
+      versionId: candidate.id,
+      versionNumber: candidate.version_number,
+      versionUrl: getVersionPublicUrl(publicUrl, candidate.version_number),
+      fileSize: candidate.file_size,
+      originalFilename: candidate.original_filename,
+      createdAt: toIso(candidate.created_at),
+      isCurrent: candidate.id === currentVersion.id,
+      isSelected: candidate.id === version.id
+    })),
+    currentVersionNumber: currentVersion.version_number,
+    selectedVersionNumber: version.version_number,
+    canEdit: auth?.account_id === draft.account_id,
+    questions
+  };
+
+  return { draft, version, viewer };
+}
+
+async function listDraftQuestions(draftId: string): Promise<DraftViewerData["questions"]> {
+  const result = await pool.query<DraftQuestionListRow>(
+    `
+      SELECT
+        draft_questions.id,
+        draft_questions.question_text,
+        draft_questions.created_at,
+        draft_questions.updated_at,
+        draft_question_answers.id AS answer_id,
+        draft_question_answers.answer_text,
+        draft_question_answers.created_at AS answer_created_at,
+        draft_question_answers.updated_at AS answer_updated_at,
+        draft_question_answers.draft_version_id AS answer_version_id,
+        draft_versions.version_number AS answer_version_number
+      FROM draft_questions
+      LEFT JOIN draft_question_answers
+        ON draft_question_answers.question_id = draft_questions.id
+      LEFT JOIN draft_versions
+        ON draft_versions.id = draft_question_answers.draft_version_id
+      WHERE draft_questions.draft_id = $1
+        AND draft_questions.deleted_at IS NULL
+      ORDER BY draft_questions.created_at ASC
+    `,
+    [draftId]
+  );
+
+  return result.rows.map((question) => ({
+    questionId: question.id,
+    questionText: question.question_text,
+    createdAt: toIso(question.created_at),
+    updatedAt: toIso(question.updated_at),
+    answer: question.answer_id && question.answer_text && question.answer_version_number && question.answer_version_id
+      ? {
+          answerId: question.answer_id,
+          answerText: question.answer_text,
+          versionNumber: question.answer_version_number,
+          versionId: question.answer_version_id,
+          createdAt: toIso(question.answer_created_at),
+          updatedAt: toIso(question.answer_updated_at)
+        }
+      : null
+  }));
+}
+
+async function findDraftQuestion(questionId: string, draftId: string): Promise<DraftQuestionRow | null> {
+  const result = await pool.query<DraftQuestionRow>(
+    `
+      SELECT *
+      FROM draft_questions
+      WHERE id = $1
+        AND draft_id = $2
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [questionId, draftId]
+  );
+  return result.rows[0] || null;
+}
+
+async function findDraftVersionByNumber(
+  draftId: string,
+  versionNumber: number
+): Promise<DraftVersionRow | null> {
+  const result = await pool.query<DraftVersionRow>(
+    `
+      SELECT *
+      FROM draft_versions
+      WHERE draft_id = $1
+        AND version_number = $2
+      LIMIT 1
+    `,
+    [draftId, versionNumber]
+  );
+  return result.rows[0] || null;
 }
 
 async function findOwnedDraft(
@@ -675,6 +986,64 @@ function cleanText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, 255) : null;
+}
+
+function cleanBodyText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) return null;
+  return trimmed;
+}
+
+function parseOptionalVersionNumber(value: unknown): number | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return parseRequiredVersionNumber(value);
+}
+
+function parseRequiredVersionNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
+  return parsed;
+}
+
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] || "" : value || "";
+}
+
+function questionToApi(
+  question: DraftQuestionRow,
+  answer: DraftViewerData["questions"][number]["answer"]
+): DraftViewerData["questions"][number] {
+  return {
+    questionId: question.id,
+    questionText: question.question_text,
+    createdAt: toIso(question.created_at),
+    updatedAt: toIso(question.updated_at),
+    answer
+  };
+}
+
+function answerToApi(
+  answer: DraftQuestionAnswerRow,
+  versionNumber: number
+): NonNullable<DraftViewerData["questions"][number]["answer"]> {
+  return {
+    answerId: answer.id,
+    answerText: answer.answer_text,
+    versionNumber,
+    versionId: answer.draft_version_id,
+    createdAt: toIso(answer.created_at),
+    updatedAt: toIso(answer.updated_at)
+  };
+}
+
+function getVersionPublicUrl(publicUrl: string, versionNumber: number): string {
+  return `${publicUrl}/v/${versionNumber}`;
+}
+
+function toIso(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 function isRecord(value: unknown): value is JsonRecord {

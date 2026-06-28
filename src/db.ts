@@ -84,8 +84,31 @@ export async function initDb(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS draft_questions (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES drafts(id),
+      question_text TEXT NOT NULL,
+      created_by_api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      deleted_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS draft_question_answers (
+      id TEXT PRIMARY KEY,
+      question_id TEXT NOT NULL UNIQUE REFERENCES draft_questions(id),
+      draft_version_id TEXT NOT NULL REFERENCES draft_versions(id),
+      answer_text TEXT NOT NULL,
+      created_by_api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS draft_versions_draft_id_idx ON draft_versions(draft_id);
     CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
+    CREATE INDEX IF NOT EXISTS draft_questions_draft_id_idx ON draft_questions(draft_id);
+    CREATE INDEX IF NOT EXISTS draft_question_answers_version_idx
+      ON draft_question_answers(draft_version_id);
   `);
 
   await ensurePublicUploadApiKey();
