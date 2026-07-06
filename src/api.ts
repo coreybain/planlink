@@ -556,9 +556,8 @@ export function createApp(): express.Express {
     }
   });
 
-  app.post("/api/drafts/:draftId/questions", requireAuth, async (req, res, next) => {
+  app.post("/api/drafts/:draftId/questions", async (req, res, next) => {
     try {
-      const auth = (req as RequestWithAuth).auth;
       const draftId = routeParam(req.params.draftId);
       const questionText = cleanBodyText(isRecord(req.body) ? req.body.questionText : null, 4000);
 
@@ -567,7 +566,7 @@ export function createApp(): express.Express {
         return;
       }
 
-      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      const draft = await findPublicDraft(draftId);
       if (!draft) {
         res.status(404).json({ ok: false, error: "Draft not found." });
         return;
@@ -580,7 +579,7 @@ export function createApp(): express.Express {
           VALUES ($1, $2, $3, $4)
           RETURNING *
         `,
-        [questionId, draft.id, questionText, auth.id]
+        [questionId, draft.id, questionText, publicUploadAuth.id]
       );
 
       res.status(201).json({
@@ -736,6 +735,21 @@ export function createApp(): express.Express {
   });
 
   return app;
+}
+
+async function findPublicDraft(draftId: string): Promise<DraftRow | null> {
+  const result = await pool.query<DraftRow>(
+    `
+      SELECT *
+      FROM drafts
+      WHERE id = $1
+        AND deleted_at IS NULL
+        AND disabled_at IS NULL
+      LIMIT 1
+    `,
+    [draftId]
+  );
+  return result.rows[0] || null;
 }
 
 async function renderDraft(

@@ -1,3 +1,6 @@
+import * as parse5 from "parse5";
+import type { DefaultTreeAdapterMap, DefaultTreeAdapterTypes } from "parse5";
+
 export interface DraftRenderData {
   id: string;
   title: string;
@@ -72,6 +75,9 @@ export interface AiPromptInput {
   answerText?: string | null;
 }
 
+type HtmlElement = DefaultTreeAdapterTypes.Element;
+type HtmlParentNode = DefaultTreeAdapterTypes.ParentNode;
+
 export function renderHome({ publicBaseUrl }: { publicBaseUrl: string }): string {
   return htmlPage({
     title: "PlanLink",
@@ -110,6 +116,7 @@ export function renderDraftWrapper({
   const selectedLabel = selectedVersion
     ? `v${selectedVersion.versionNumber}${selectedVersion.isCurrent ? " current" : ""}`
     : `v${Number(version.version_number)}`;
+  const iframeHtml = renderIframeSrcdoc(html);
   const banner = signedIn
     ? ""
     : `
@@ -289,8 +296,6 @@ export function renderDraftWrapper({
       min-width: 0;
     }
 
-    .review-auth,
-    .narration-tools,
     .question-composer {
       display: flex;
       flex-direction: column;
@@ -298,54 +303,8 @@ export function renderDraftWrapper({
       min-width: 0;
     }
 
-    .review-input,
-    .narration-select,
     .review-textarea {
       width: 100%;
-    }
-
-    .narration-label {
-      display: grid;
-      gap: 6px;
-      color: #41514a;
-      font-size: 13px;
-    }
-
-    .narration-select {
-      border: 1px solid #bcc9bf;
-      border-radius: 6px;
-      background: #ffffff;
-      color: #17201b;
-      min-height: 34px;
-      padding: 6px 8px;
-      box-sizing: border-box;
-    }
-
-    .narration-controls {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 6px;
-    }
-
-    .tts-button {
-      min-height: 32px;
-      border: 1px solid #bcc9bf;
-      border-radius: 6px;
-      background: #ffffff;
-      color: #17201b;
-      padding: 6px 8px;
-      text-align: center;
-    }
-
-    .tts-button.primary {
-      background: #174c43;
-      border-color: #174c43;
-      color: #ffffff;
-    }
-
-    .tts-button:disabled {
-      cursor: not-allowed;
-      opacity: 0.55;
     }
 
     .review-textarea {
@@ -431,7 +390,7 @@ export function renderDraftWrapper({
     title="${title}"
     sandbox=""
     referrerpolicy="no-referrer"
-    srcdoc="${escapeAttribute(html)}"></iframe>
+    srcdoc="${escapeAttribute(iframeHtml)}"></iframe>
   <section class="review-panel" id="planlink-review-panel" data-open="false">
     <div class="review-bar">
       <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false">
@@ -447,28 +406,8 @@ export function renderDraftWrapper({
     </div>
     <div class="review-body" id="review-body" hidden>
       <div class="review-tools">
-        <div class="narration-tools" id="narration-tools">
-          <label class="narration-label">
-            <span>Audio run-through</span>
-            <select class="narration-select" id="narration-select">
-              ${renderNarrationOptions(reviewData.narration)}
-            </select>
-          </label>
-          <div class="narration-controls">
-            <button class="tts-button primary" id="tts-listen" type="button">Listen</button>
-            <button class="tts-button" id="tts-pause" type="button">Pause</button>
-            <button class="tts-button" id="tts-resume" type="button">Resume</button>
-            <button class="tts-button" id="tts-stop" type="button">Stop</button>
-          </div>
-          <p class="review-empty" id="narration-note"></p>
-        </div>
-        <div class="review-auth" id="review-auth">
-          <input class="review-input" id="owner-key" type="password" placeholder="Owner API key" autocomplete="off">
-          <button class="review-action" id="owner-unlock" type="button">Unlock owner mode</button>
-          <button class="review-toggle" id="owner-lock" type="button" hidden>Lock owner mode</button>
-        </div>
-        <div class="question-composer" id="question-composer" hidden>
-          <textarea class="review-textarea" id="question-text" placeholder="Ask a question"></textarea>
+        <div class="question-composer" id="question-composer">
+          <textarea class="review-textarea" id="question-text" placeholder="Ask a question or suggest a change"></textarea>
           <button class="review-action" id="question-save" type="button">Add question</button>
         </div>
       </div>
@@ -485,21 +424,10 @@ export function renderDraftWrapper({
       var body = document.getElementById("review-body");
       var status = document.getElementById("review-status");
       var versionSelect = document.getElementById("review-version-select");
-      var ownerInput = document.getElementById("owner-key");
-      var ownerUnlock = document.getElementById("owner-unlock");
-      var ownerLock = document.getElementById("owner-lock");
-      var authBox = document.getElementById("review-auth");
       var composer = document.getElementById("question-composer");
       var questionText = document.getElementById("question-text");
       var questionSave = document.getElementById("question-save");
       var questionList = document.getElementById("question-list");
-      var narrationSelect = document.getElementById("narration-select");
-      var narrationNote = document.getElementById("narration-note");
-      var ttsListen = document.getElementById("tts-listen");
-      var ttsPause = document.getElementById("tts-pause");
-      var ttsResume = document.getElementById("tts-resume");
-      var ttsStop = document.getElementById("tts-stop");
-      var activeUtterance = null;
 
       function getOwnerKey() {
         try {
@@ -552,10 +480,18 @@ export function renderDraftWrapper({
 
       async function apiRequest(url, payload) {
         var token = getOwnerKey();
-        if (!token) throw new Error("Unlock owner mode first.");
+        if (!token) throw new Error("Owner access required.");
+        return postJson(url, payload, authHeaders());
+      }
+
+      async function publicRequest(url, payload) {
+        return postJson(url, payload, { "Content-Type": "application/json" });
+      }
+
+      async function postJson(url, payload, headers) {
         var response = await fetch(url, {
           method: "POST",
-          headers: authHeaders(),
+          headers: headers,
           body: JSON.stringify(payload)
         });
         var body = await response.json();
@@ -574,11 +510,8 @@ export function renderDraftWrapper({
           versionSelect.appendChild(option);
         });
 
-        authBox.hidden = state.canEdit;
-        composer.hidden = !state.canEdit;
-        ownerLock.hidden = !state.canEdit;
+        composer.hidden = false;
         setStatus(state.canEdit ? "Owner mode" : "v" + (version ? version.versionNumber : state.selectedVersionNumber));
-        renderNarration();
 
         questionList.textContent = "";
         if (!state.questions.length) {
@@ -666,90 +599,6 @@ export function renderDraftWrapper({
         return article;
       }
 
-      function renderNarration() {
-        var supported = canSpeak();
-        var items = state.narration || [];
-        narrationSelect.textContent = "";
-
-        if (!items.length) {
-          var option = document.createElement("option");
-          option.value = "";
-          option.textContent = "No narrated sections";
-          narrationSelect.appendChild(option);
-          setTtsDisabled(true);
-          narrationNote.textContent = supported
-            ? "This draft does not include narrated section notes yet."
-            : "Text-to-speech is not available in this browser.";
-          return;
-        }
-
-        items.forEach(function (item) {
-          var option = document.createElement("option");
-          option.value = item.narrationId;
-          option.textContent = item.title + (item.source === "section" ? " (auto)" : "");
-          narrationSelect.appendChild(option);
-        });
-
-        setTtsDisabled(!supported);
-        narrationNote.textContent = supported
-          ? "Chrome can read the selected section aloud."
-          : "Text-to-speech is not available in this browser.";
-      }
-
-      function setTtsDisabled(disabled) {
-        ttsListen.disabled = disabled;
-        ttsPause.disabled = disabled;
-        ttsResume.disabled = disabled;
-        ttsStop.disabled = disabled;
-        narrationSelect.disabled = disabled || !(state.narration || []).length;
-      }
-
-      function selectedNarration() {
-        var items = state.narration || [];
-        return items.find(function (item) { return item.narrationId === narrationSelect.value; }) || items[0];
-      }
-
-      function canSpeak() {
-        return "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-      }
-
-      function stopSpeech() {
-        if (!canSpeak()) return;
-        window.speechSynthesis.cancel();
-        activeUtterance = null;
-      }
-
-      function speakSelectedNarration() {
-        if (!canSpeak()) {
-          narrationNote.textContent = "Text-to-speech is not available in this browser.";
-          return;
-        }
-
-        var item = selectedNarration();
-        if (!item) {
-          narrationNote.textContent = "No narrated section selected.";
-          return;
-        }
-
-        stopSpeech();
-        var utterance = new SpeechSynthesisUtterance(item.text);
-        utterance.lang = navigator.language || "en-AU";
-        utterance.rate = 0.96;
-        utterance.pitch = 1;
-        utterance.onend = function () {
-          activeUtterance = null;
-          narrationNote.textContent = "Finished " + item.title + ".";
-        };
-        utterance.onerror = function () {
-          activeUtterance = null;
-          narrationNote.textContent = "Could not read this section.";
-        };
-        activeUtterance = utterance;
-        window.speechSynthesis.speak(utterance);
-        narrationNote.textContent = "Reading " + item.title + ".";
-        setStatus("Reading section");
-      }
-
       function buildPrompt(question) {
         var version = selectedVersion();
         return [
@@ -792,56 +641,12 @@ export function renderDraftWrapper({
       });
 
       versionSelect.addEventListener("change", function () {
-        stopSpeech();
         window.location.href = versionSelect.value;
-      });
-
-      ttsListen.addEventListener("click", speakSelectedNarration);
-      ttsPause.addEventListener("click", function () {
-        if (!canSpeak()) return;
-        window.speechSynthesis.pause();
-        narrationNote.textContent = "Paused.";
-      });
-      ttsResume.addEventListener("click", function () {
-        if (!canSpeak()) return;
-        window.speechSynthesis.resume();
-        narrationNote.textContent = activeUtterance ? "Reading resumed." : "Nothing is queued.";
-      });
-      ttsStop.addEventListener("click", function () {
-        stopSpeech();
-        narrationNote.textContent = "Stopped.";
-      });
-      narrationSelect.addEventListener("change", stopSpeech);
-
-      ownerUnlock.addEventListener("click", async function () {
-        var token = ownerInput.value.trim();
-        if (!token) {
-          setStatus("Enter an API key");
-          return;
-        }
-        setOwnerKey(token);
-        try {
-          await refreshReview();
-          if (!state.canEdit) {
-            setOwnerKey("");
-            setStatus("API key does not own this draft");
-          }
-        } catch (error) {
-          setOwnerKey("");
-          setStatus(error.message || "Could not unlock");
-        }
-      });
-
-      ownerLock.addEventListener("click", async function () {
-        setOwnerKey("");
-        state.canEdit = false;
-        await refreshReview();
-        setStatus("Locked");
       });
 
       questionSave.addEventListener("click", async function () {
         try {
-          await apiRequest("/api/drafts/" + encodeURIComponent(state.draft.draftId) + "/questions", {
+          await publicRequest("/api/drafts/" + encodeURIComponent(state.draft.draftId) + "/questions", {
             questionText: questionText.value
           });
           questionText.value = "";
@@ -871,6 +676,36 @@ export function renderDraftWrapper({
   <!-- draft:${escapeHtml(draft.id)} version:${Number(version.version_number)} -->
 </body>
 </html>`;
+}
+
+function renderIframeSrcdoc(html: string): string {
+  const document = parse5.parse<DefaultTreeAdapterMap>(html);
+  const htmlNode = findChildElement(document, "html");
+  const head = htmlNode ? findChildElement(htmlNode, "head") : findChildElement(document, "head");
+
+  if (!head) return `<base href="about:srcdoc">\n${html}`;
+  if (!hasBaseElement(head)) {
+    head.childNodes.unshift({
+      nodeName: "base",
+      tagName: "base",
+      attrs: [{ name: "href", value: "about:srcdoc" }],
+      namespaceURI: "http://www.w3.org/1999/xhtml" as HtmlElement["namespaceURI"],
+      parentNode: head,
+      childNodes: []
+    });
+  }
+
+  return parse5.serialize(document);
+}
+
+function findChildElement(node: HtmlParentNode, tagName: string): HtmlElement | undefined {
+  return node.childNodes.find((child): child is HtmlElement => (
+    "tagName" in child && child.tagName.toLowerCase() === tagName
+  ));
+}
+
+function hasBaseElement(node: HtmlParentNode): boolean {
+  return node.childNodes.some((child) => "tagName" in child && child.tagName.toLowerCase() === "base");
 }
 
 export function buildAiPrompt({
@@ -952,17 +787,6 @@ function defaultReviewData(
     narration: [],
     questions: []
   };
-}
-
-function renderNarrationOptions(sections: DraftNarrationSection[]): string {
-  if (!sections.length) {
-    return '<option value="">No narrated sections</option>';
-  }
-
-  return sections.map((section) => `
-              <option value="${escapeAttribute(section.narrationId)}">
-                ${escapeHtml(section.title)}${section.source === "section" ? " (auto)" : ""}
-              </option>`).join("");
 }
 
 function htmlPage({ title, body }: { title: string; body: string }): string {

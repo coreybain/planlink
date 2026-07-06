@@ -13,9 +13,23 @@ test("renders uploaded HTML inside a sandboxed srcdoc iframe", () => {
 
   assert.match(rendered, /<header class="planlink-banner">/);
   assert.match(rendered, /sandbox=""/);
-  assert.match(rendered, /srcdoc="&lt;h1 onclick=&quot;alert\(1\)&quot;&gt;Plan&lt;\/h1&gt;"/);
+  assert.match(rendered, /&lt;base href=&quot;about:srcdoc&quot;&gt;/);
+  assert.match(rendered, /&lt;h1 onclick=&quot;alert\(1\)&quot;&gt;Plan&lt;\/h1&gt;/);
   assert.match(rendered, /Draft &lt;Title&gt;/);
   assert.match(rendered, /draft:abc123def456 version:3/);
+});
+
+test("anchors uploaded HTML to about:srcdoc so TOC fragment links stay inside the iframe", () => {
+  const rendered = renderDraftWrapper({
+    draft: { id: "abc123def456", title: "Draft" },
+    version: { version_number: 1 },
+    html: `<!doctype html><html><head><title>Plan</title></head><body><a href="#scope">Scope</a><h2 id="scope">Scope</h2></body></html>`,
+    signedIn: false
+  });
+
+  const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
+  assert.match(srcdoc, /&lt;head&gt;&lt;base href=&quot;about:srcdoc&quot;&gt;/);
+  assert.match(srcdoc, /href=&quot;#scope&quot;/);
 });
 
 test("renders review Q&A and version controls outside the sandboxed iframe", () => {
@@ -31,9 +45,12 @@ test("renders review Q&A and version controls outside the sandboxed iframe", () 
   assert.match(rendered, /id="review-version-select"/);
   assert.match(rendered, /Copy AI prompt/);
   assert.match(rendered, /Save answer/);
-  assert.match(rendered, /Audio run-through/);
-  assert.match(rendered, /id="narration-select"/);
-  assert.match(rendered, /Listen/);
+  assert.match(rendered, /Ask a question or suggest a change/);
+  assert.match(rendered, /Add question/);
+  assert.doesNotMatch(rendered, /Audio run-through/);
+  assert.doesNotMatch(rendered, /id="narration-select"/);
+  assert.doesNotMatch(rendered, /Owner API key/);
+  assert.doesNotMatch(rendered, /Unlock owner mode/);
   assert.match(rendered, /"narrationId":"narration-1"/);
   assert.match(rendered, /"selectedVersionNumber":2/);
   assert.match(rendered, /"versionNumber":2/);

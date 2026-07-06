@@ -33,11 +33,13 @@ Do not include:
 
 ## Upload Flow
 
+Always invoke the CLI as `bunx planlink@latest` so Codex uses the newest published package instead of a cached Bun resolution.
+
 1. Write the HTML file locally.
 2. Run:
 
    ```sh
-   bunx planlink upload <file path>
+   bunx planlink@latest upload <file path>
    ```
 
 3. Return the PlanLink URL to the user.
@@ -45,7 +47,7 @@ Do not include:
 If the same local file was uploaded before, the CLI updates the existing draft and creates a new PlanLink version. To force a new draft, use:
 
 ```sh
-bunx planlink upload <file path> --new
+bunx planlink@latest upload <file path> --new
 ```
 
 PlanLink stores CLI auth and draft mappings in `~/.planlink`.
@@ -55,9 +57,9 @@ PlanLink stores CLI auth and draft mappings in `~/.planlink`.
 Use authenticated draft management when a user asks to list or remove PlanLink drafts:
 
 ```sh
-bunx planlink drafts list
-bunx planlink drafts delete <draft-id> --yes
-bunx planlink drafts delete-all --yes
+bunx planlink@latest drafts list
+bunx planlink@latest drafts delete <draft-id> --yes
+bunx planlink@latest drafts delete-all --yes
 ```
 
 These commands require a configured API key and only affect drafts owned by that key's account.
