@@ -76,6 +76,7 @@ export interface AiPromptInput {
 }
 
 type HtmlElement = DefaultTreeAdapterTypes.Element;
+type HtmlNode = DefaultTreeAdapterTypes.Node;
 type HtmlParentNode = DefaultTreeAdapterTypes.ParentNode;
 
 export function renderHome({ publicBaseUrl }: { publicBaseUrl: string }): string {
@@ -388,7 +389,7 @@ export function renderDraftWrapper({
   <iframe
     class="draft-frame"
     title="${title}"
-    sandbox=""
+    sandbox="allow-top-navigation-by-user-activation"
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(iframeHtml)}"></iframe>
   <section class="review-panel" id="planlink-review-panel" data-open="false">
@@ -683,6 +684,8 @@ function renderIframeSrcdoc(html: string): string {
   const htmlNode = findChildElement(document, "html");
   const head = htmlNode ? findChildElement(htmlNode, "head") : findChildElement(document, "head");
 
+  setTopLevelAnchorTargets(document);
+
   if (!head) return `<base href="about:srcdoc">\n${html}`;
   if (!hasBaseElement(head)) {
     head.childNodes.unshift({
@@ -696,6 +699,21 @@ function renderIframeSrcdoc(html: string): string {
   }
 
   return parse5.serialize(document);
+}
+
+function setTopLevelAnchorTargets(node: HtmlNode): void {
+  if ("tagName" in node && node.tagName.toLowerCase() === "a") {
+    const href = node.attrs.find((attr) => attr.name.toLowerCase() === "href")?.value.trim() || "";
+    if (href && !href.startsWith("#")) {
+      const target = node.attrs.find((attr) => attr.name.toLowerCase() === "target");
+      if (target) target.value = "_top";
+      else node.attrs.push({ name: "target", value: "_top" });
+    }
+  }
+
+  if ("childNodes" in node) {
+    for (const child of node.childNodes) setTopLevelAnchorTargets(child);
+  }
 }
 
 function findChildElement(node: HtmlParentNode, tagName: string): HtmlElement | undefined {

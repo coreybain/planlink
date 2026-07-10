@@ -12,7 +12,7 @@ test("renders uploaded HTML inside a sandboxed srcdoc iframe", () => {
   });
 
   assert.match(rendered, /<header class="planlink-banner">/);
-  assert.match(rendered, /sandbox=""/);
+  assert.match(rendered, /sandbox="allow-top-navigation-by-user-activation"/);
   assert.match(rendered, /&lt;base href=&quot;about:srcdoc&quot;&gt;/);
   assert.match(rendered, /&lt;h1 onclick=&quot;alert\(1\)&quot;&gt;Plan&lt;\/h1&gt;/);
   assert.match(rendered, /Draft &lt;Title&gt;/);
@@ -30,6 +30,23 @@ test("anchors uploaded HTML to about:srcdoc so TOC fragment links stay inside th
   const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
   assert.match(srcdoc, /&lt;head&gt;&lt;base href=&quot;about:srcdoc&quot;&gt;/);
   assert.match(srcdoc, /href=&quot;#scope&quot;/);
+  assert.doesNotMatch(srcdoc, /href=&quot;#scope&quot; target=&quot;_top&quot;/);
+});
+
+test("opens plan links in the top-level page instead of nesting another PlanLink wrapper", () => {
+  const rendered = renderDraftWrapper({
+    draft: { id: "abc123def456", title: "Draft" },
+    version: { version_number: 1 },
+    html: `<!doctype html><html><body>
+      <a href="https://planlink.example/d/next-plan">Next plan</a>
+      <a href="/d/another-plan" target="_self">Another plan</a>
+    </body></html>`,
+    signedIn: false
+  });
+
+  const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
+  assert.match(srcdoc, /href=&quot;https:\/\/planlink\.example\/d\/next-plan&quot; target=&quot;_top&quot;/);
+  assert.match(srcdoc, /href=&quot;\/d\/another-plan&quot; target=&quot;_top&quot;/);
 });
 
 test("renders review Q&A and version controls outside the sandboxed iframe", () => {
