@@ -12,7 +12,7 @@ test("renders uploaded HTML inside a sandboxed srcdoc iframe", () => {
   });
 
   assert.match(rendered, /<header class="planlink-banner">/);
-  assert.match(rendered, /sandbox="allow-top-navigation-by-user-activation"/);
+  assert.match(rendered, /sandbox="allow-same-origin allow-top-navigation-by-user-activation"/);
   assert.match(rendered, /&lt;base href=&quot;about:srcdoc&quot;&gt;/);
   assert.match(rendered, /&lt;h1 onclick=&quot;alert\(1\)&quot;&gt;Plan&lt;\/h1&gt;/);
   assert.match(rendered, /Draft &lt;Title&gt;/);
@@ -47,6 +47,9 @@ test("opens plan links in the top-level page instead of nesting another PlanLink
   const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
   assert.match(srcdoc, /href=&quot;https:\/\/planlink\.example\/d\/next-plan&quot; target=&quot;_top&quot;/);
   assert.match(srcdoc, /href=&quot;\/d\/another-plan&quot; target=&quot;_top&quot;/);
+  assert.match(rendered, /frameDocument\.addEventListener\("click"/);
+  assert.match(rendered, /destination\.scrollIntoView\(\)/);
+  assert.match(rendered, /window\.location\.href = new URL\(href, window\.location\.href\)\.href/);
 });
 
 test("renders review Q&A and version controls outside the sandboxed iframe", () => {

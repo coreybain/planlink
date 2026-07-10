@@ -389,7 +389,7 @@ export function renderDraftWrapper({
   <iframe
     class="draft-frame"
     title="${title}"
-    sandbox="allow-top-navigation-by-user-activation"
+    sandbox="allow-same-origin allow-top-navigation-by-user-activation"
     referrerpolicy="no-referrer"
     srcdoc="${escapeAttribute(iframeHtml)}"></iframe>
   <section class="review-panel" id="planlink-review-panel" data-open="false">
@@ -420,6 +420,7 @@ export function renderDraftWrapper({
     (function () {
       var state = JSON.parse(document.getElementById("planlink-review-data").textContent || "{}");
       var storageKey = "planlink.ownerApiKey";
+      var draftFrame = document.querySelector(".draft-frame");
       var panel = document.getElementById("planlink-review-panel");
       var toggle = document.getElementById("review-toggle");
       var body = document.getElementById("review-body");
@@ -429,6 +430,48 @@ export function renderDraftWrapper({
       var questionText = document.getElementById("question-text");
       var questionSave = document.getElementById("question-save");
       var questionList = document.getElementById("question-list");
+
+      function bindDraftNavigation() {
+        var frameDocument;
+        try {
+          frameDocument = draftFrame.contentDocument;
+        } catch (_error) {
+          return;
+        }
+        if (!frameDocument || !frameDocument.documentElement) return;
+        if (frameDocument.documentElement.getAttribute("data-planlink-navigation-bound") === "true") return;
+        frameDocument.documentElement.setAttribute("data-planlink-navigation-bound", "true");
+
+        frameDocument.addEventListener("click", function (event) {
+          var target = event.target;
+          if (!target || typeof target.closest !== "function") return;
+          var anchor = target.closest("a[href]");
+          if (!anchor) return;
+
+          var href = (anchor.getAttribute("href") || "").trim();
+          if (!href) return;
+          event.preventDefault();
+
+          if (href.charAt(0) === "#") {
+            var fragment = href.slice(1);
+            try {
+              fragment = decodeURIComponent(fragment);
+            } catch (_error) {}
+            var destination = frameDocument.getElementById(fragment);
+            if (!destination) {
+              var named = frameDocument.getElementsByName(fragment);
+              destination = named.length ? named[0] : null;
+            }
+            if (destination) destination.scrollIntoView();
+            return;
+          }
+
+          window.location.href = new URL(href, window.location.href).href;
+        });
+      }
+
+      draftFrame.addEventListener("load", bindDraftNavigation);
+      bindDraftNavigation();
 
       function getOwnerKey() {
         try {
