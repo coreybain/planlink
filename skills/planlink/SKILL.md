@@ -70,6 +70,8 @@ Public PlanLink URLs show a sanitized, server-rendered draft with persistent Pla
 
 Each draft also includes a bottom review panel. Viewers can switch between versions, select plan text, attach named feedback, read saved questions and answers, and copy an AI-ready prompt for any thread. Owners can answer feedback, resolve or reopen threads, and mark feedback as addressed in a selected version.
 
+Retrieve unresolved feedback for an agent revision with `bunx planlink@latest feedback <draft-id>`. Add `--prompt` for one combined AI-ready prompt, `--json` for structured output, or `--all` to include resolved threads. After updating the plan, repeat `--address <feedback-id>` on the upload command to associate those threads with the new version.
+
 ## Audio Run-Throughs
 
 When creating plans, add a listener-friendly run-through at the bottom of every major section:

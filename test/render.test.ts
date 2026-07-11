@@ -63,6 +63,8 @@ test("renders review Q&A and version controls after the plan content", () => {
   assert.match(rendered, /id="planlink-review-panel"/);
   assert.match(rendered, /id="review-version-select"/);
   assert.match(rendered, /Copy AI prompt/);
+  assert.match(rendered, /Copy all unresolved feedback/);
+  assert.match(rendered, /Feedback ID:/);
   assert.match(rendered, /Save answer/);
   assert.match(rendered, /Ask a question or suggest a change/);
   assert.match(rendered, /Add feedback/);

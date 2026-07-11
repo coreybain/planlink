@@ -63,6 +63,22 @@ bunx planlink drafts delete-all --yes
 Draft management requires `planlink auth set <api-key>` and only applies to
 drafts owned by that key's account.
 
+Retrieve unresolved reviewer feedback for an agent revision:
+
+```sh
+bunx planlink feedback <draft-id>
+bunx planlink feedback <draft-id> --prompt
+bunx planlink feedback <draft-id> --json
+```
+
+After updating the source file, associate the new version with the feedback it
+addresses by repeating `--address`:
+
+```sh
+bunx planlink upload ./plan.html --draft <draft-id> \
+  --address <feedback-id> --address <feedback-id>
+```
+
 ## Review feedback
 
 Every public draft includes a bottom review panel. Viewers can switch between
@@ -72,7 +88,8 @@ read questions and answers, and copy an AI-ready prompt for any thread.
 Owner mode can answer feedback, resolve or reopen threads, and mark feedback as
 addressed in a selected plan version. Re-uploading the same local HTML file
 updates the existing draft and creates a new version; use `--new` when you want
-a separate draft instead.
+a separate draft instead. The panel can also copy all unresolved feedback as one
+AI-ready prompt.
 
 ## Audio Run-Throughs
 

@@ -299,7 +299,17 @@ export function createApp(): express.Express {
         const submittedDraftId = typeof body.draftId === "string" && body.draftId
           ? body.draftId
           : null;
+        const addressedQuestionIds = Array.isArray(body.addressedQuestionIds)
+          ? [...new Set(body.addressedQuestionIds.filter((value): value is string => (
+              typeof value === "string" && Boolean(value.trim())
+            )).map((value) => value.trim()))].slice(0, 100)
+          : [];
         const validation = validateHtml(html, { maxBytes: config.maxHtmlBytes });
+
+        if (addressedQuestionIds.length && !submittedDraftId) {
+          res.status(400).json({ ok: false, error: "Addressed feedback requires an existing draft." });
+          return;
+        }
 
         if (!validation.ok) {
           res.status(422).json({
@@ -420,6 +430,30 @@ export function createApp(): express.Express {
             ]
           );
 
+          if (addressedQuestionIds.length) {
+            const addressedResult = await client.query<{ id: string }>(
+              `
+                UPDATE draft_questions
+                SET resolved_at = now(),
+                    resolved_by_api_key_id = $1,
+                    addressed_version_id = $2,
+                    updated_at = now()
+                WHERE draft_id = $3
+                  AND id = ANY($4::text[])
+                  AND deleted_at IS NULL
+                RETURNING id
+              `,
+              [auth.id, versionId, draftId, addressedQuestionIds]
+            );
+            if ((addressedResult.rowCount || 0) !== addressedQuestionIds.length) {
+              const error = new Error("One or more feedback IDs were not found on this draft.") as Error & {
+                statusCode: number;
+              };
+              error.statusCode = 400;
+              throw error;
+            }
+          }
+
           return {
             draftId,
             versionId,
@@ -430,6 +464,7 @@ export function createApp(): express.Express {
               publicBaseUrl: config.publicBaseUrl,
               requestBaseUrl: getRequestBaseUrl(req)
             }),
+            addressedQuestionIds,
             warnings: validation.warnings
           };
         });
@@ -517,6 +552,43 @@ export function createApp(): express.Express {
       }
 
       res.json({ ok: true, ...viewer });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/drafts/:draftId/feedback", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const ownedDraft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!ownedDraft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const { viewer } = await findPublicDraftData(req, draftId, undefined, auth);
+      if (!viewer) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const includeResolved = req.query.status === "all";
+      const feedback = includeResolved
+        ? viewer.questions
+        : viewer.questions.filter((question) => !question.resolvedAt);
+
+      res.json({
+        ok: true,
+        draft: viewer.draft,
+        currentVersionNumber: viewer.currentVersionNumber,
+        feedback,
+        summary: {
+          open: viewer.questions.filter((question) => !question.resolvedAt).length,
+          resolved: viewer.questions.filter((question) => question.resolvedAt).length,
+          addressed: viewer.questions.filter((question) => question.addressedVersionNumber).length
+        }
+      });
     } catch (error) {
       next(error);
     }

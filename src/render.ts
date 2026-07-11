@@ -477,6 +477,7 @@ export function renderDraftWrapper({
     </div>
     <div class="review-body" id="review-body" hidden>
       <div class="review-tools">
+        <button class="review-copy" id="copy-all-feedback" type="button">Copy all unresolved feedback</button>
         <div class="question-composer" id="question-composer">
           <input class="review-input" id="reviewer-name" type="text" maxlength="255" placeholder="Your name">
           <div class="selection-context" id="selection-context" hidden>
@@ -506,6 +507,7 @@ export function renderDraftWrapper({
       var status = document.getElementById("review-status");
       var versionSelect = document.getElementById("review-version-select");
       var composer = document.getElementById("question-composer");
+      var copyAllFeedback = document.getElementById("copy-all-feedback");
       var reviewerName = document.getElementById("reviewer-name");
       var selectionContext = document.getElementById("selection-context");
       var selectionText = document.getElementById("selection-text");
@@ -878,6 +880,37 @@ export function renderDraftWrapper({
         ].join("\\n");
       }
 
+      function buildAllFeedbackPrompt() {
+        var version = selectedVersion();
+        var feedback = state.questions.filter(function (question) { return !question.resolvedAt; });
+        var lines = [
+          "Please update this plan based on the reviewer feedback below.",
+          "",
+          "Plan: " + state.draft.title,
+          "Draft URL: " + (version ? version.versionUrl : state.draft.publicUrl),
+          "Current version: v" + state.currentVersionNumber,
+          "",
+          "Unresolved feedback:"
+        ];
+        feedback.forEach(function (question, index) {
+          lines.push(
+            "",
+            String(index + 1) + ". " + question.questionText,
+            "   Feedback ID: " + question.questionId,
+            "   Reviewer: " + (question.reviewerName || "Anonymous reviewer")
+          );
+          if (question.anchor) lines.push("   Selected text: “" + question.anchor.text + "”");
+          if (question.answer && question.answer.answerText) {
+            lines.push("   Current answer: " + question.answer.answerText);
+          }
+        });
+        lines.push(
+          "",
+          "Update the source HTML and explain how each feedback item was handled."
+        );
+        return { text: lines.join("\\n"), count: feedback.length };
+      }
+
       async function copyText(value) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(value);
@@ -898,6 +931,16 @@ export function renderDraftWrapper({
         panel.setAttribute("data-open", open ? "true" : "false");
         toggle.setAttribute("aria-expanded", String(open));
         body.hidden = !open;
+      });
+
+      copyAllFeedback.addEventListener("click", async function () {
+        var prompt = buildAllFeedbackPrompt();
+        if (!prompt.count) {
+          setStatus("No unresolved feedback");
+          return;
+        }
+        await copyText(prompt.text);
+        setStatus("Copied " + prompt.count + " feedback item" + (prompt.count === 1 ? "" : "s"));
       });
 
       versionSelect.addEventListener("change", function () {

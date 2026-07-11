@@ -54,6 +54,7 @@ interface UploadResponse {
   publicUrl?: unknown;
   versionNumber?: unknown;
   warnings?: unknown;
+  addressedQuestionIds?: unknown;
   error?: unknown;
   errors?: unknown;
 }
@@ -84,6 +85,28 @@ interface DeleteDraftResponse {
   draftId?: unknown;
   draftIds?: unknown;
   deletedCount?: unknown;
+  error?: unknown;
+}
+
+interface FeedbackItem {
+  questionId: string;
+  questionText: string;
+  reviewerName: string;
+  anchor: {
+    text: string;
+    sectionId: string | null;
+  } | null;
+  resolvedAt: string | null;
+  addressedVersionNumber: number | null;
+  answerText: string | null;
+}
+
+interface FeedbackResponse {
+  ok?: boolean;
+  draft?: unknown;
+  currentVersionNumber?: unknown;
+  feedback?: unknown;
+  summary?: unknown;
   error?: unknown;
 }
 
@@ -145,9 +168,18 @@ program
   .argument("<file>", "HTML file path")
   .option("--draft <draft-id>", "Update a specific draft")
   .option("--new", "Always create a new draft")
+  .option(
+    "--address <feedback-id>",
+    "Mark a feedback thread addressed in the uploaded version (repeatable)",
+    collectOption,
+    [] as string[]
+  )
   .option("--api-url <url>", "Override the default PlanLink API base URL")
   .description("Upload or update an HTML draft.")
-  .action(async (file: string, options: { draft?: string; new?: boolean; apiUrl?: string }) => {
+  .action(async (
+    file: string,
+    options: { draft?: string; new?: boolean; address?: string[]; apiUrl?: string }
+  ) => {
     const resolvedFile = path.resolve(file);
     const { apiUrl, apiKey } = readAuth(options.apiUrl, { requireApiKey: false });
 
@@ -165,11 +197,17 @@ program
     const drafts = readDrafts();
     const knownDraft = drafts.files?.[resolvedFile];
     const draftId = options.new ? null : options.draft || knownDraft?.draftId || null;
+    const addressedQuestionIds = [...new Set(options.address || [])];
+
+    if (addressedQuestionIds.length && !draftId) {
+      throw new CliError("--address requires an existing draft. Pass --draft or upload the mapped file.");
+    }
 
     const payload = {
       html,
       filename: path.basename(resolvedFile),
       draftId,
+      addressedQuestionIds,
       metadata: {
         ...collectGitMetadata(path.dirname(resolvedFile)),
         cliVersion: VERSION,
@@ -220,6 +258,9 @@ program
     console.log(`URL: ${publicUrl}`);
     console.log(`Draft ID: ${responseDraftId}`);
     console.log(`Version: ${versionNumber}`);
+    if (addressedQuestionIds.length) {
+      console.log(`Addressed feedback: ${addressedQuestionIds.join(", ")}`);
+    }
     if (Array.isArray(body.warnings)) {
       for (const warning of body.warnings) {
         if (typeof warning === "string") {
@@ -227,6 +268,70 @@ program
         }
       }
     }
+  });
+
+program
+  .command("feedback")
+  .argument("<draft-id>", "Draft ID to retrieve feedback for")
+  .description("Retrieve draft feedback for an agent revision workflow.")
+  .option("--all", "Include resolved and addressed feedback")
+  .option("--prompt", "Print one AI-ready prompt containing the feedback")
+  .option("--json", "Print the machine-readable response")
+  .option("--api-url <url>", "Override the default PlanLink API base URL")
+  .action(async (
+    draftId: string,
+    options: { all?: boolean; prompt?: boolean; json?: boolean; apiUrl?: string }
+  ) => {
+    const { apiUrl, apiKey } = readAuth(options.apiUrl);
+    const status = options.all ? "all" : "open";
+    const { body } = await requestJson<FeedbackResponse>(
+      `${apiUrl}/api/drafts/${encodeURIComponent(draftId)}/feedback?status=${status}`,
+      { headers: authHeaders(apiKey) }
+    );
+
+    if (options.json) {
+      console.log(JSON.stringify(body, null, 2));
+      return;
+    }
+
+    const feedback = requireFeedbackItems(body.feedback);
+    const draft = requireFeedbackDraft(body.draft);
+    const currentVersionNumber = requireNumber(
+      body.currentVersionNumber,
+      "Feedback response did not include currentVersionNumber."
+    );
+
+    if (options.prompt) {
+      console.log(buildCombinedFeedbackPrompt({
+        draftId,
+        draftTitle: draft.title,
+        publicUrl: draft.publicUrl,
+        currentVersionNumber,
+        feedback
+      }));
+      return;
+    }
+
+    console.log(`${draft.title} · v${currentVersionNumber}`);
+    console.log(draft.publicUrl);
+    if (!feedback.length) {
+      console.log(options.all ? "No feedback." : "No unresolved feedback.");
+      return;
+    }
+
+    for (const item of feedback) {
+      const state = item.addressedVersionNumber
+        ? `addressed in v${item.addressedVersionNumber}`
+        : item.resolvedAt
+          ? "resolved"
+          : "open";
+      console.log(`\n${item.questionId} · ${state} · ${item.reviewerName}`);
+      if (item.anchor) console.log(`  On: “${item.anchor.text}”`);
+      console.log(`  ${item.questionText}`);
+      if (item.answerText) console.log(`  Answer: ${item.answerText}`);
+    }
+
+    console.log(`\nAI prompt: planlink feedback ${draftId} --prompt`);
   });
 
 const draftsCommand = program
@@ -463,6 +568,86 @@ function requireDraftSummaries(value: unknown): DraftSummary[] {
       disabledReason: optionalString(draft.disabledReason)
     };
   });
+}
+
+function requireFeedbackItems(value: unknown): FeedbackItem[] {
+  if (!Array.isArray(value)) {
+    throw new CliError("Feedback response did not include feedback.");
+  }
+
+  return value.map((item) => {
+    if (!isRecord(item)) throw new CliError("Feedback response included an invalid thread.");
+    const anchor = isRecord(item.anchor) && typeof item.anchor.text === "string"
+      ? {
+          text: item.anchor.text,
+          sectionId: optionalString(item.anchor.sectionId)
+        }
+      : null;
+    const answer = isRecord(item.answer) ? item.answer : null;
+    return {
+      questionId: requireString(item.questionId, "Feedback thread did not include questionId."),
+      questionText: requireString(item.questionText, "Feedback thread did not include questionText."),
+      reviewerName: optionalString(item.reviewerName) || "Anonymous reviewer",
+      anchor,
+      resolvedAt: optionalString(item.resolvedAt),
+      addressedVersionNumber: optionalNumber(item.addressedVersionNumber),
+      answerText: answer ? optionalString(answer.answerText) : null
+    };
+  });
+}
+
+function requireFeedbackDraft(value: unknown): { title: string; publicUrl: string } {
+  if (!isRecord(value)) throw new CliError("Feedback response did not include draft details.");
+  return {
+    title: requireString(value.title, "Feedback draft did not include title."),
+    publicUrl: requireString(value.publicUrl, "Feedback draft did not include publicUrl.")
+  };
+}
+
+function buildCombinedFeedbackPrompt({
+  draftId,
+  draftTitle,
+  publicUrl,
+  currentVersionNumber,
+  feedback
+}: {
+  draftId: string;
+  draftTitle: string;
+  publicUrl: string;
+  currentVersionNumber: number;
+  feedback: FeedbackItem[];
+}): string {
+  const lines = [
+    "Please update this plan based on the reviewer feedback below.",
+    "",
+    `Plan: ${draftTitle}`,
+    `Draft URL: ${publicUrl}`,
+    `Current version: v${currentVersionNumber}`,
+    ""
+  ];
+
+  if (!feedback.length) {
+    lines.push("There is no unresolved feedback.");
+    return lines.join("\n");
+  }
+
+  lines.push("Unresolved feedback:");
+  feedback.forEach((item, index) => {
+    lines.push("", `${index + 1}. ${item.questionText}`, `   Feedback ID: ${item.questionId}`);
+    lines.push(`   Reviewer: ${item.reviewerName}`);
+    if (item.anchor) lines.push(`   Selected text: “${item.anchor.text}”`);
+    if (item.answerText) lines.push(`   Current answer: ${item.answerText}`);
+  });
+  lines.push(
+    "",
+    "Update the source HTML, explain how each item was handled, then upload the revision and mark these feedback IDs addressed:",
+    `planlink upload <file> --draft ${draftId} ${feedback.map((item) => `--address ${item.questionId}`).join(" ")}`
+  );
+  return lines.join("\n");
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function readJson<T>(file: string, fallback: T): T {
