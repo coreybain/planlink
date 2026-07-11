@@ -72,6 +72,8 @@ Each draft also includes a bottom review panel. Viewers can switch between versi
 
 Retrieve unresolved feedback for an agent revision with `bunx planlink@latest feedback <draft-id>`. Add `--prompt` for one combined AI-ready prompt, `--json` for structured output, or `--all` to include resolved threads. After updating the plan, repeat `--address <feedback-id>` on the upload command to associate those threads with the new version.
 
+Owners can also configure required reviewers in the review panel. Approval and request-changes decisions are tied to the selected version and retained in decision history, so a new version must be reviewed independently.
+
 ## Audio Run-Throughs
 
 When creating plans, add a listener-friendly run-through at the bottom of every major section:

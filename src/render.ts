@@ -29,7 +29,28 @@ export interface DraftReviewRenderData {
   selectedVersionNumber: number;
   canEdit: boolean;
   narration: DraftNarrationSection[];
+  approval: DraftApprovalRenderData;
   questions: DraftReviewQuestion[];
+}
+
+export interface DraftApprovalRenderData {
+  requiredReviewers: Array<{
+    reviewerId: string;
+    reviewerName: string;
+    createdAt: string;
+  }>;
+  decisions: Array<{
+    decisionId: string;
+    versionId: string;
+    versionNumber: number;
+    reviewerName: string;
+    decision: "approve" | "request_changes";
+    note: string | null;
+    createdAt: string;
+  }>;
+  selectedVersionStatus: "not_required" | "pending" | "approved" | "changes_requested";
+  approvedCount: number;
+  requiredCount: number;
 }
 
 export interface DraftReviewVersion {
@@ -134,6 +155,14 @@ export function renderDraftWrapper({
   const selectedLabel = selectedVersion
     ? `v${selectedVersion.versionNumber}${selectedVersion.isCurrent ? " current" : ""}`
     : `v${Number(version.version_number)}`;
+  const approvalStatus = reviewData.approval.selectedVersionStatus;
+  const approvalLabel = approvalStatus === "approved"
+    ? "Approved"
+    : approvalStatus === "changes_requested"
+      ? "Changes requested"
+      : approvalStatus === "pending"
+        ? `Pending ${reviewData.approval.approvedCount}/${reviewData.approval.requiredCount}`
+        : "No approval required";
   const inlineDocument = renderInlineDraftDocument(html);
   const banner = signedIn
     ? ""
@@ -216,22 +245,115 @@ export function renderDraftWrapper({
 
     .review-panel {
       position: fixed;
-      inset: auto 0 0;
+      inset: auto 18px 18px auto;
       z-index: 2147483647;
-      border-top: 1px solid #d8ddd3;
-      background: #f4f5ef;
-      box-shadow: 0 -10px 28px rgba(23, 32, 27, 0.08);
+      width: auto;
+      max-width: calc(100vw - 36px);
       color: #17201b;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    .review-panel[data-open="true"] {
+      inset: max(60px, calc(env(safe-area-inset-top) + 12px)) 18px 18px auto;
+      display: flex;
+      flex-direction: column;
+      width: min(440px, calc(100vw - 36px));
+      max-width: none;
+      overflow: hidden;
+      border: 1px solid rgba(23, 32, 27, 0.14);
+      border-radius: 18px;
+      background: #f8f8f4;
+      box-shadow: 0 24px 80px rgba(23, 32, 27, 0.2), 0 3px 12px rgba(23, 32, 27, 0.08);
+    }
+
+    .review-panel:not([data-open="true"]) .review-bar {
+      grid-template-columns: auto auto auto;
+      border: 1px solid rgba(23, 32, 27, 0.14);
+      border-radius: 999px;
+      background: rgba(255, 255, 252, 0.94);
+      box-shadow: 0 12px 36px rgba(23, 32, 27, 0.16), 0 2px 8px rgba(23, 32, 27, 0.08);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .review-panel:not([data-open="true"]) .review-status {
+      display: none;
+    }
+
+    .review-panel:not([data-open="true"]) .review-version span {
+      display: none;
+    }
+
+    .review-panel[data-open="true"] .review-bar {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      border-bottom: 1px solid rgba(23, 32, 27, 0.1);
+      background: rgba(255, 255, 252, 0.72);
+    }
+
+    .review-panel[data-open="true"] .review-status {
+      display: none;
+    }
+
+    .review-panel[data-open="true"] .approval-badge {
+      justify-self: end;
+    }
+
+    .review-panel[data-open="true"] .review-version {
+      justify-content: flex-end;
+    }
+
+    .review-panel[data-open="true"] .review-body {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .review-panel[data-open="true"] .review-toggle#review-toggle {
+      border-color: transparent;
+      background: transparent;
+      padding-left: 2px;
+      font-weight: 750;
+    }
+
+    .review-panel[data-open="true"] .review-toggle#review-toggle::before {
+      content: "←";
+      margin-right: 7px;
+      color: #52645a;
+    }
+
+    .review-panel:not([data-open="true"]) .review-toggle#review-toggle::before {
+      content: "✦";
+      margin-right: 7px;
+      color: #174c43;
+    }
+
+    .review-panel:not([data-open="true"]) .review-toggle#review-toggle {
+      border-color: transparent;
+      background: transparent;
+      font-weight: 750;
+      padding-left: 12px;
+    }
+
+    .review-panel:not([data-open="true"]) .review-version select {
+      border-color: transparent;
+      background: #f2f4ef;
+    }
+
+    .review-panel:not([data-open="true"]) .approval-badge {
+      margin-right: 4px;
+    }
+
+    .review-panel,
+    .review-panel * {
+      box-sizing: border-box;
+    }
+
     .review-bar {
       display: grid;
-      grid-template-columns: minmax(150px, 1fr) minmax(150px, auto) auto;
-      gap: 10px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
       align-items: center;
-      min-height: 54px;
-      padding: 8px 14px;
+      min-height: 48px;
+      padding: 7px 10px;
       box-sizing: border-box;
     }
 
@@ -241,7 +363,7 @@ export function renderDraftWrapper({
     .review-save {
       min-height: 34px;
       border: 1px solid #bcc9bf;
-      border-radius: 6px;
+      border-radius: 10px;
       background: #ffffff;
       color: #17201b;
       padding: 6px 10px;
@@ -277,7 +399,7 @@ export function renderDraftWrapper({
     .review-input,
     .review-textarea {
       border: 1px solid #bcc9bf;
-      border-radius: 6px;
+      border-radius: 10px;
       background: #ffffff;
       color: #17201b;
       min-height: 34px;
@@ -291,13 +413,38 @@ export function renderDraftWrapper({
       white-space: nowrap;
     }
 
+    .approval-badge {
+      border-radius: 999px;
+      padding: 5px 9px;
+      background: #e9ede8;
+      color: #41514a;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .approval-badge[data-status="approved"] {
+      background: #dcefe1;
+      color: #195c35;
+    }
+
+    .approval-badge[data-status="changes_requested"] {
+      background: #f7dfda;
+      color: #8b3025;
+    }
+
+    .approval-badge[data-status="pending"] {
+      background: #fff1c9;
+      color: #79550d;
+    }
+
     .review-body {
       display: grid;
-      grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-      gap: 14px;
-      max-height: min(54vh, 560px);
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+      max-height: none;
       overflow: auto;
-      padding: 0 14px 14px;
+      padding: 12px;
       box-sizing: border-box;
     }
 
@@ -317,6 +464,53 @@ export function renderDraftWrapper({
       flex-direction: column;
       gap: 8px;
       min-width: 0;
+    }
+
+    .approval-panel {
+      display: grid;
+      gap: 8px;
+      border: 1px solid #cfd8cf;
+      border-radius: 12px;
+      background: #ffffff;
+      padding: 10px;
+    }
+
+    .approval-panel h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .approval-actions,
+    .reviewer-add {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .reviewer-list,
+    .approval-history {
+      display: grid;
+      gap: 6px;
+    }
+
+    .reviewer-chip,
+    .approval-history-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid #e0e5df;
+      border-radius: 9px;
+      padding: 6px 8px;
+      color: #41514a;
+      font-size: 12px;
+    }
+
+    .reviewer-chip button {
+      border: 0;
+      background: transparent;
+      color: #8b3025;
+      padding: 0;
     }
 
     .review-textarea {
@@ -342,7 +536,7 @@ export function renderDraftWrapper({
 
     .question-card {
       border: 1px solid #d8ddd3;
-      border-radius: 8px;
+      border-radius: 12px;
       background: #ffffff;
       padding: 12px;
       box-sizing: border-box;
@@ -443,18 +637,31 @@ export function renderDraftWrapper({
     }
 
     @media (max-width: 720px) {
-      .review-bar {
-        grid-template-columns: 1fr;
-        align-items: stretch;
+      .review-panel {
+        inset: auto 10px calc(10px + env(safe-area-inset-bottom)) 10px;
+        width: auto;
+        max-width: none;
       }
 
-      .review-version {
-        justify-content: space-between;
+      .review-panel[data-open="true"] {
+        inset: auto 8px calc(8px + env(safe-area-inset-bottom)) 8px;
+        width: auto;
+        max-height: min(82dvh, 760px);
+        border-radius: 20px;
+      }
+
+      .review-bar {
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .review-panel:not([data-open="true"]) .review-bar {
+        grid-template-columns: minmax(0, 1fr) auto auto;
       }
 
       .review-body {
         grid-template-columns: 1fr;
-        max-height: 62vh;
+        max-height: none;
+        padding: 10px;
       }
     }
   </style>
@@ -462,21 +669,39 @@ export function renderDraftWrapper({
 <body${inlineDocument.bodyAttributes}>
   ${banner}
   ${inlineDocument.bodyHtml}
-  <section class="review-panel" id="planlink-review-panel" data-open="false">
+  <section class="review-panel" id="planlink-review-panel" data-open="false" aria-label="Plan review">
     <div class="review-bar">
-      <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false">
-        Review Q&amp;A
+      <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false" aria-controls="review-body">
+        Review
       </button>
       <label class="review-version">
         <span>Version</span>
-        <select id="review-version-select">
+        <select id="review-version-select" aria-label="Plan version">
           ${renderVersionOptions(reviewData.versions)}
         </select>
       </label>
+      <span class="approval-badge" id="approval-badge" data-status="${approvalStatus}">${escapeHtml(approvalLabel)}</span>
       <span class="review-status" id="review-status">${escapeHtml(selectedLabel)}</span>
     </div>
     <div class="review-body" id="review-body" hidden>
       <div class="review-tools">
+        <section class="approval-panel" id="approval-panel">
+          <h3>Version approval</h3>
+          <p class="review-empty" id="approval-summary"></p>
+          <div class="reviewer-list" id="reviewer-list"></div>
+          <div class="reviewer-add" id="reviewer-add" hidden>
+            <input class="review-input" id="required-reviewer-name" type="text" maxlength="255" placeholder="Required reviewer name">
+            <button class="review-toggle" id="required-reviewer-save" type="button">Add reviewer</button>
+          </div>
+          <input class="review-input" id="approval-reviewer-name" type="text" maxlength="255" placeholder="Your reviewer name" list="required-reviewer-options">
+          <datalist id="required-reviewer-options"></datalist>
+          <textarea class="review-textarea" id="approval-note" placeholder="Decision note (optional)"></textarea>
+          <div class="approval-actions">
+            <button class="review-save" id="approval-approve" type="button">Approve v${reviewData.selectedVersionNumber}</button>
+            <button class="review-toggle" id="approval-request-changes" type="button">Request changes</button>
+          </div>
+          <div class="approval-history" id="approval-history"></div>
+        </section>
         <button class="review-copy" id="copy-all-feedback" type="button">Copy all unresolved feedback</button>
         <div class="question-composer" id="question-composer">
           <input class="review-input" id="reviewer-name" type="text" maxlength="255" placeholder="Your name">
@@ -505,6 +730,18 @@ export function renderDraftWrapper({
       var toggle = document.getElementById("review-toggle");
       var body = document.getElementById("review-body");
       var status = document.getElementById("review-status");
+      var approvalBadge = document.getElementById("approval-badge");
+      var approvalSummary = document.getElementById("approval-summary");
+      var reviewerList = document.getElementById("reviewer-list");
+      var reviewerAdd = document.getElementById("reviewer-add");
+      var requiredReviewerName = document.getElementById("required-reviewer-name");
+      var requiredReviewerSave = document.getElementById("required-reviewer-save");
+      var approvalReviewerName = document.getElementById("approval-reviewer-name");
+      var requiredReviewerOptions = document.getElementById("required-reviewer-options");
+      var approvalNote = document.getElementById("approval-note");
+      var approvalApprove = document.getElementById("approval-approve");
+      var approvalRequestChanges = document.getElementById("approval-request-changes");
+      var approvalHistory = document.getElementById("approval-history");
       var versionSelect = document.getElementById("review-version-select");
       var composer = document.getElementById("question-composer");
       var copyAllFeedback = document.getElementById("copy-all-feedback");
@@ -523,7 +760,9 @@ export function renderDraftWrapper({
         );
         document.documentElement.style.setProperty(
           "--planlink-review-height",
-          panel.getBoundingClientRect().height + "px"
+          (panel.getAttribute("data-open") === "true"
+            ? 0
+            : panel.getBoundingClientRect().height + 24) + "px"
         );
       }
 
@@ -537,6 +776,7 @@ export function renderDraftWrapper({
 
       try {
         reviewerName.value = window.localStorage.getItem(reviewerStorageKey) || "";
+        approvalReviewerName.value = reviewerName.value;
       } catch (_error) {}
 
       function renderActiveAnchor() {
@@ -622,6 +862,7 @@ export function renderDraftWrapper({
           selectedVersionNumber: body.selectedVersionNumber,
           canEdit: Boolean(body.canEdit),
           narration: body.narration || state.narration || [],
+          approval: body.approval || state.approval,
           questions: body.questions || []
         };
         renderReview();
@@ -695,6 +936,92 @@ export function renderDraftWrapper({
         }
       }
 
+      function approvalStatusLabel(approval) {
+        if (approval.selectedVersionStatus === "approved") return "Approved";
+        if (approval.selectedVersionStatus === "changes_requested") return "Changes requested";
+        if (approval.selectedVersionStatus === "pending") {
+          return "Pending " + approval.approvedCount + "/" + approval.requiredCount;
+        }
+        return "No approval required";
+      }
+
+      function renderApproval() {
+        var approval = state.approval || {
+          requiredReviewers: [],
+          decisions: [],
+          selectedVersionStatus: "not_required",
+          approvedCount: 0,
+          requiredCount: 0
+        };
+        var label = approvalStatusLabel(approval);
+        approvalBadge.textContent = label;
+        approvalBadge.setAttribute("data-status", approval.selectedVersionStatus);
+        approvalSummary.textContent = "v" + state.selectedVersionNumber + " · " + label;
+        approvalApprove.textContent = "Approve v" + state.selectedVersionNumber;
+        reviewerAdd.hidden = !state.canEdit;
+
+        reviewerList.textContent = "";
+        requiredReviewerOptions.textContent = "";
+        if (!approval.requiredReviewers.length) {
+          var none = document.createElement("span");
+          none.className = "review-empty";
+          none.textContent = "No required reviewers yet.";
+          reviewerList.appendChild(none);
+        }
+        approval.requiredReviewers.forEach(function (reviewer) {
+          var option = document.createElement("option");
+          option.value = reviewer.reviewerName;
+          requiredReviewerOptions.appendChild(option);
+
+          var chip = document.createElement("div");
+          chip.className = "reviewer-chip";
+          var name = document.createElement("span");
+          name.textContent = reviewer.reviewerName;
+          chip.appendChild(name);
+          if (state.canEdit) {
+            var remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "Remove";
+            remove.addEventListener("click", async function () {
+              try {
+                await apiRequest(
+                  "/api/drafts/" + encodeURIComponent(state.draft.draftId)
+                    + "/reviewers/" + encodeURIComponent(reviewer.reviewerId),
+                  {},
+                  "DELETE"
+                );
+                await refreshReview();
+                setStatus("Reviewer removed");
+              } catch (error) {
+                setStatus(error.message || "Could not remove reviewer");
+              }
+            });
+            chip.appendChild(remove);
+          }
+          reviewerList.appendChild(chip);
+        });
+
+        approvalHistory.textContent = "";
+        var historyTitle = document.createElement("strong");
+        historyTitle.textContent = "Decision history";
+        approvalHistory.appendChild(historyTitle);
+        var decisions = approval.decisions.slice(0, 8);
+        if (!decisions.length) {
+          var noHistory = document.createElement("span");
+          noHistory.className = "review-empty";
+          noHistory.textContent = "No decisions yet.";
+          approvalHistory.appendChild(noHistory);
+        }
+        decisions.forEach(function (decision) {
+          var item = document.createElement("div");
+          item.className = "approval-history-item";
+          var decisionLabel = decision.decision === "approve" ? "Approved" : "Requested changes";
+          item.textContent = decision.reviewerName + " · " + decisionLabel + " v" + decision.versionNumber
+            + (decision.note ? " · " + decision.note : "");
+          approvalHistory.appendChild(item);
+        });
+      }
+
       function renderReview() {
         var version = selectedVersion();
         versionSelect.innerHTML = "";
@@ -707,6 +1034,7 @@ export function renderDraftWrapper({
         });
 
         composer.hidden = false;
+        renderApproval();
         setStatus(state.canEdit ? "Owner mode" : "v" + (version ? version.versionNumber : state.selectedVersionNumber));
 
         questionList.textContent = "";
@@ -926,11 +1254,52 @@ export function renderDraftWrapper({
         textarea.remove();
       }
 
+      async function submitApproval(decision) {
+        var name = approvalReviewerName.value.trim();
+        if (!name) {
+          setStatus("Reviewer name required");
+          return;
+        }
+        try {
+          window.localStorage.setItem(reviewerStorageKey, name);
+          reviewerName.value = name;
+        } catch (_error) {}
+        try {
+          var result = await publicRequest(
+            "/api/drafts/" + encodeURIComponent(state.draft.draftId) + "/approvals",
+            {
+              reviewerName: name,
+              decision: decision,
+              note: approvalNote.value,
+              versionNumber: state.selectedVersionNumber
+            }
+          );
+          state.approval = result.approval;
+          approvalNote.value = "";
+          renderApproval();
+          setStatus(decision === "approve" ? "Version approved" : "Changes requested");
+        } catch (error) {
+          setStatus(error.message || "Could not save decision");
+        }
+      }
+
       toggle.addEventListener("click", function () {
         var open = panel.getAttribute("data-open") !== "true";
         panel.setAttribute("data-open", open ? "true" : "false");
         toggle.setAttribute("aria-expanded", String(open));
+        toggle.textContent = open ? "Close" : "Review";
         body.hidden = !open;
+        syncShellInsets();
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key !== "Escape" || panel.getAttribute("data-open") !== "true") return;
+        panel.setAttribute("data-open", "false");
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.textContent = "Review";
+        body.hidden = true;
+        toggle.focus();
+        syncShellInsets();
       });
 
       copyAllFeedback.addEventListener("click", async function () {
@@ -941,6 +1310,25 @@ export function renderDraftWrapper({
         }
         await copyText(prompt.text);
         setStatus("Copied " + prompt.count + " feedback item" + (prompt.count === 1 ? "" : "s"));
+      });
+
+      requiredReviewerSave.addEventListener("click", async function () {
+        try {
+          await apiRequest(
+            "/api/drafts/" + encodeURIComponent(state.draft.draftId) + "/reviewers",
+            { reviewerName: requiredReviewerName.value }
+          );
+          requiredReviewerName.value = "";
+          await refreshReview();
+          setStatus("Required reviewer added");
+        } catch (error) {
+          setStatus(error.message || "Could not add reviewer");
+        }
+      });
+
+      approvalApprove.addEventListener("click", function () { submitApproval("approve"); });
+      approvalRequestChanges.addEventListener("click", function () {
+        submitApproval("request_changes");
       });
 
       versionSelect.addEventListener("change", function () {
@@ -972,6 +1360,7 @@ export function renderDraftWrapper({
       if (window.location.hash === "#review") {
         panel.setAttribute("data-open", "true");
         toggle.setAttribute("aria-expanded", "true");
+        toggle.textContent = "Close";
         body.hidden = false;
       }
       if (getOwnerKey()) {
@@ -1165,6 +1554,13 @@ function defaultReviewData(
     selectedVersionNumber: versionNumber,
     canEdit: false,
     narration: [],
+    approval: {
+      requiredReviewers: [],
+      decisions: [],
+      selectedVersionStatus: "not_required",
+      approvedCount: 0,
+      requiredCount: 0
+    },
     questions: []
   };
 }

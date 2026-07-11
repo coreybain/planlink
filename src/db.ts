@@ -104,6 +104,27 @@ export async function initDb(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS draft_required_reviewers (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES drafts(id),
+      reviewer_name TEXT NOT NULL,
+      reviewer_name_normalized TEXT NOT NULL,
+      created_by_api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      deleted_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS draft_approval_decisions (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES drafts(id),
+      draft_version_id TEXT NOT NULL REFERENCES draft_versions(id),
+      reviewer_name TEXT NOT NULL,
+      reviewer_name_normalized TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK (decision IN ('approve', 'request_changes')),
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     ALTER TABLE draft_questions
       ADD COLUMN IF NOT EXISTS reviewer_name TEXT NOT NULL DEFAULT 'Anonymous reviewer',
       ADD COLUMN IF NOT EXISTS anchor_text TEXT,
@@ -119,6 +140,11 @@ export async function initDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS draft_questions_draft_id_idx ON draft_questions(draft_id);
     CREATE INDEX IF NOT EXISTS draft_question_answers_version_idx
       ON draft_question_answers(draft_version_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS draft_required_reviewers_active_name_idx
+      ON draft_required_reviewers(draft_id, reviewer_name_normalized)
+      WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS draft_approval_decisions_draft_version_idx
+      ON draft_approval_decisions(draft_id, draft_version_id, created_at DESC);
   `);
 
   await ensurePublicUploadApiKey();

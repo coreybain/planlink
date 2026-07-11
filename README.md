@@ -91,6 +91,15 @@ updates the existing draft and creates a new version; use `--new` when you want
 a separate draft instead. The panel can also copy all unresolved feedback as one
 AI-ready prompt.
 
+## Version approval
+
+Owners can define the reviewers required to approve a draft. Reviewers record an
+approval or request changes against the currently selected version, with an
+optional decision note. Decisions are immutable and retained as history; a new
+version starts with a fresh pending state instead of inheriting an older
+approval. The review bar shows `Approved`, `Changes requested`, or the current
+pending count for the selected version.
+
 ## Audio Run-Throughs
 
 PlanLink extracts narrated section notes from static HTML and exposes them in

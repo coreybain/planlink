@@ -65,6 +65,12 @@ test("renders review Q&A and version controls after the plan content", () => {
   assert.match(rendered, /Copy AI prompt/);
   assert.match(rendered, /Copy all unresolved feedback/);
   assert.match(rendered, /Feedback ID:/);
+  assert.match(rendered, /data-status="approved">Approved/);
+  assert.match(rendered, /Version approval/);
+  assert.match(rendered, /Required reviewer name/);
+  assert.match(rendered, /Request changes/);
+  assert.match(rendered, /Decision history/);
+  assert.match(rendered, /Ready to build\./);
   assert.match(rendered, /Save answer/);
   assert.match(rendered, /Ask a question or suggest a change/);
   assert.match(rendered, /Add feedback/);
@@ -154,6 +160,29 @@ function reviewFixture(): DraftReviewRenderData {
         source: "explicit"
       }
     ],
+    approval: {
+      requiredReviewers: [
+        {
+          reviewerId: "reviewer_1",
+          reviewerName: "Casey Reviewer",
+          createdAt: "2026-06-29T01:00:00.000Z"
+        }
+      ],
+      decisions: [
+        {
+          decisionId: "decision_1",
+          versionId: "version_2",
+          versionNumber: 2,
+          reviewerName: "Casey Reviewer",
+          decision: "approve",
+          note: "Ready to build.",
+          createdAt: "2026-06-29T01:30:00.000Z"
+        }
+      ],
+      selectedVersionStatus: "approved",
+      approvedCount: 1,
+      requiredCount: 1
+    },
     questions: [
       {
         questionId: "question_1",

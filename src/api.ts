@@ -121,6 +121,23 @@ interface DraftQuestionListRow {
   answer_version_id: string | null;
 }
 
+interface DraftRequiredReviewerRow {
+  id: string;
+  reviewer_name: string;
+  created_at: Date;
+}
+
+interface DraftApprovalDecisionRow {
+  id: string;
+  draft_version_id: string;
+  version_number: number;
+  reviewer_name: string;
+  reviewer_name_normalized: string;
+  decision: "approve" | "request_changes";
+  note: string | null;
+  created_at: Date;
+}
+
 interface DraftViewerData {
   draft: {
     draftId: string;
@@ -145,6 +162,25 @@ interface DraftViewerData {
   selectedVersionNumber: number;
   canEdit: boolean;
   narration: NarrationSection[];
+  approval: {
+    requiredReviewers: Array<{
+      reviewerId: string;
+      reviewerName: string;
+      createdAt: string;
+    }>;
+    decisions: Array<{
+      decisionId: string;
+      versionId: string;
+      versionNumber: number;
+      reviewerName: string;
+      decision: "approve" | "request_changes";
+      note: string | null;
+      createdAt: string;
+    }>;
+    selectedVersionStatus: "not_required" | "pending" | "approved" | "changes_requested";
+    approvedCount: number;
+    requiredCount: number;
+  };
   questions: Array<{
     questionId: string;
     questionText: string;
@@ -594,6 +630,152 @@ export function createApp(): express.Express {
     }
   });
 
+  app.post("/api/drafts/:draftId/reviewers", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const reviewerName = cleanText(isRecord(req.body) ? req.body.reviewerName : null);
+      if (!reviewerName) {
+        res.status(400).json({ ok: false, error: "Reviewer name is required." });
+        return;
+      }
+
+      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const reviewerId = newInternalId();
+      const result = await pool.query<DraftRequiredReviewerRow>(
+        `
+          INSERT INTO draft_required_reviewers (
+            id, draft_id, reviewer_name, reviewer_name_normalized, created_by_api_key_id
+          )
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (draft_id, reviewer_name_normalized) WHERE deleted_at IS NULL
+          DO UPDATE SET reviewer_name = EXCLUDED.reviewer_name
+          RETURNING id, reviewer_name, created_at
+        `,
+        [reviewerId, draft.id, reviewerName, normalizeReviewerName(reviewerName), auth.id]
+      );
+
+      res.status(201).json({
+        ok: true,
+        reviewer: {
+          reviewerId: result.rows[0].id,
+          reviewerName: result.rows[0].reviewer_name,
+          createdAt: toIso(result.rows[0].created_at)
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/drafts/:draftId/reviewers/:reviewerId", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const reviewerId = routeParam(req.params.reviewerId);
+      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const result = await pool.query(
+        `
+          UPDATE draft_required_reviewers
+          SET deleted_at = now()
+          WHERE id = $1
+            AND draft_id = $2
+            AND deleted_at IS NULL
+          RETURNING id
+        `,
+        [reviewerId, draft.id]
+      );
+      if (!result.rowCount) {
+        res.status(404).json({ ok: false, error: "Reviewer not found." });
+        return;
+      }
+      res.json({ ok: true, reviewerId });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/drafts/:draftId/approvals", async (req, res, next) => {
+    try {
+      const draftId = routeParam(req.params.draftId);
+      const body = isRecord(req.body) ? req.body : {};
+      const submittedReviewerName = cleanText(body.reviewerName);
+      const decision = body.decision === "approve" || body.decision === "request_changes"
+        ? body.decision
+        : null;
+      const versionNumber = parseRequiredVersionNumber(body.versionNumber);
+      const note = cleanBodyText(body.note, 4000);
+
+      if (!submittedReviewerName || !decision || !versionNumber) {
+        res.status(400).json({
+          ok: false,
+          error: "reviewerName, decision, and a valid versionNumber are required."
+        });
+        return;
+      }
+
+      const draft = await findPublicDraft(draftId);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+      const version = await findDraftVersionByNumber(draft.id, versionNumber);
+      if (!version) {
+        res.status(404).json({ ok: false, error: "Draft version not found." });
+        return;
+      }
+
+      const reviewerResult = await pool.query<DraftRequiredReviewerRow>(
+        `
+          SELECT id, reviewer_name, created_at
+          FROM draft_required_reviewers
+          WHERE draft_id = $1
+            AND deleted_at IS NULL
+          ORDER BY created_at ASC
+        `,
+        [draft.id]
+      );
+      const normalizedName = normalizeReviewerName(submittedReviewerName);
+      const requiredReviewer = reviewerResult.rows.find(
+        (reviewer) => normalizeReviewerName(reviewer.reviewer_name) === normalizedName
+      );
+      if (reviewerResult.rows.length && !requiredReviewer) {
+        res.status(403).json({ ok: false, error: "This reviewer is not required for this draft." });
+        return;
+      }
+      const reviewerName = requiredReviewer?.reviewer_name || submittedReviewerName;
+      const decisionId = newInternalId();
+      await pool.query(
+        `
+          INSERT INTO draft_approval_decisions (
+            id, draft_id, draft_version_id, reviewer_name,
+            reviewer_name_normalized, decision, note
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `,
+        [decisionId, draft.id, version.id, reviewerName, normalizeReviewerName(reviewerName), decision, note]
+      );
+
+      res.status(201).json({
+        ok: true,
+        decisionId,
+        approval: await getDraftApprovalData(draft.id, version.id)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.delete("/api/drafts", requireAuth, async (req, res, next) => {
     try {
       const auth = (req as RequestWithAuth).auth;
@@ -1018,6 +1200,7 @@ async function findPublicDraftData(
     requestBaseUrl: getRequestBaseUrl(req)
   });
   const questions = await listDraftQuestions(draft.id);
+  const approval = await getDraftApprovalData(draft.id, version.id);
   const viewer: DraftViewerData = {
     draft: {
       draftId: draft.id,
@@ -1042,10 +1225,93 @@ async function findPublicDraftData(
     selectedVersionNumber: version.version_number,
     canEdit: auth?.account_id === draft.account_id,
     narration: [],
+    approval,
     questions
   };
 
   return { draft, version, viewer };
+}
+
+async function getDraftApprovalData(
+  draftId: string,
+  selectedVersionId: string
+): Promise<DraftViewerData["approval"]> {
+  const [reviewerResult, decisionResult] = await Promise.all([
+    pool.query<DraftRequiredReviewerRow>(
+      `
+        SELECT id, reviewer_name, created_at
+        FROM draft_required_reviewers
+        WHERE draft_id = $1
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC
+      `,
+      [draftId]
+    ),
+    pool.query<DraftApprovalDecisionRow>(
+      `
+        SELECT
+          draft_approval_decisions.id,
+          draft_approval_decisions.draft_version_id,
+          draft_versions.version_number,
+          draft_approval_decisions.reviewer_name,
+          draft_approval_decisions.reviewer_name_normalized,
+          draft_approval_decisions.decision,
+          draft_approval_decisions.note,
+          draft_approval_decisions.created_at
+        FROM draft_approval_decisions
+        JOIN draft_versions ON draft_versions.id = draft_approval_decisions.draft_version_id
+        WHERE draft_approval_decisions.draft_id = $1
+        ORDER BY draft_approval_decisions.created_at DESC
+      `,
+      [draftId]
+    )
+  ]);
+
+  const requiredReviewers = reviewerResult.rows.map((reviewer) => ({
+    reviewerId: reviewer.id,
+    reviewerName: reviewer.reviewer_name,
+    createdAt: toIso(reviewer.created_at)
+  }));
+  const decisions = decisionResult.rows.map((decision) => ({
+    decisionId: decision.id,
+    versionId: decision.draft_version_id,
+    versionNumber: decision.version_number,
+    reviewerName: decision.reviewer_name,
+    decision: decision.decision,
+    note: decision.note,
+    createdAt: toIso(decision.created_at)
+  }));
+
+  const latestByReviewer = new Map<string, DraftApprovalDecisionRow>();
+  for (const decision of decisionResult.rows) {
+    if (decision.draft_version_id !== selectedVersionId) continue;
+    if (!latestByReviewer.has(decision.reviewer_name_normalized)) {
+      latestByReviewer.set(decision.reviewer_name_normalized, decision);
+    }
+  }
+  const requiredNames = reviewerResult.rows.map((reviewer) => normalizeReviewerName(reviewer.reviewer_name));
+  const latestRequiredDecisions = requiredNames
+    .map((name) => latestByReviewer.get(name))
+    .filter((decision): decision is DraftApprovalDecisionRow => Boolean(decision));
+  const approvedCount = latestRequiredDecisions.filter((decision) => decision.decision === "approve").length;
+  const hasChangesRequested = latestRequiredDecisions.some(
+    (decision) => decision.decision === "request_changes"
+  );
+  const selectedVersionStatus = requiredNames.length === 0
+    ? "not_required"
+    : hasChangesRequested
+      ? "changes_requested"
+      : approvedCount === requiredNames.length
+        ? "approved"
+        : "pending";
+
+  return {
+    requiredReviewers,
+    decisions,
+    selectedVersionStatus,
+    approvedCount,
+    requiredCount: requiredNames.length
+  };
 }
 
 async function listDraftQuestions(draftId: string): Promise<DraftViewerData["questions"]> {
@@ -1218,6 +1484,10 @@ function cleanBodyText(value: unknown, maxLength: number): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > maxLength) return null;
   return trimmed;
+}
+
+function normalizeReviewerName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
 }
 
 function parseOptionalVersionNumber(value: unknown): number | undefined {
