@@ -76,6 +76,14 @@ interface DraftQuestionRow {
   id: string;
   draft_id: string;
   question_text: string;
+  reviewer_name: string;
+  anchor_text: string | null;
+  anchor_prefix: string | null;
+  anchor_suffix: string | null;
+  anchor_section_id: string | null;
+  resolved_at: Date | null;
+  resolved_by_api_key_id: string | null;
+  addressed_version_id: string | null;
   created_by_api_key_id: string;
   created_at: Date;
   updated_at: Date;
@@ -95,6 +103,14 @@ interface DraftQuestionAnswerRow {
 interface DraftQuestionListRow {
   id: string;
   question_text: string;
+  reviewer_name: string;
+  anchor_text: string | null;
+  anchor_prefix: string | null;
+  anchor_suffix: string | null;
+  anchor_section_id: string | null;
+  resolved_at: Date | null;
+  addressed_version_id: string | null;
+  addressed_version_number: number | null;
   created_at: Date;
   updated_at: Date;
   answer_id: string | null;
@@ -132,6 +148,16 @@ interface DraftViewerData {
   questions: Array<{
     questionId: string;
     questionText: string;
+    reviewerName: string;
+    anchor: {
+      text: string;
+      prefix: string;
+      suffix: string;
+      sectionId: string | null;
+    } | null;
+    resolvedAt: string | null;
+    addressedVersionNumber: number | null;
+    addressedVersionId: string | null;
     createdAt: string;
     updatedAt: string;
     answer: {
@@ -559,7 +585,14 @@ export function createApp(): express.Express {
   app.post("/api/drafts/:draftId/questions", async (req, res, next) => {
     try {
       const draftId = routeParam(req.params.draftId);
-      const questionText = cleanBodyText(isRecord(req.body) ? req.body.questionText : null, 4000);
+      const body = isRecord(req.body) ? req.body : {};
+      const questionText = cleanBodyText(body.questionText, 4000);
+      const reviewerName = cleanText(body.reviewerName) || "Anonymous reviewer";
+      const anchor = isRecord(body.anchor) ? body.anchor : {};
+      const anchorText = cleanBodyText(anchor.text, 1000);
+      const anchorPrefix = anchorText ? cleanBodyText(anchor.prefix, 200) : null;
+      const anchorSuffix = anchorText ? cleanBodyText(anchor.suffix, 200) : null;
+      const anchorSectionId = anchorText ? cleanText(anchor.sectionId) : null;
 
       if (!questionText) {
         res.status(400).json({ ok: false, error: "Question is required." });
@@ -575,11 +608,25 @@ export function createApp(): express.Express {
       const questionId = newInternalId();
       const result = await pool.query<DraftQuestionRow>(
         `
-          INSERT INTO draft_questions (id, draft_id, question_text, created_by_api_key_id)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO draft_questions (
+            id, draft_id, question_text, reviewer_name,
+            anchor_text, anchor_prefix, anchor_suffix, anchor_section_id,
+            created_by_api_key_id
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           RETURNING *
         `,
-        [questionId, draft.id, questionText, publicUploadAuth.id]
+        [
+          questionId,
+          draft.id,
+          questionText,
+          reviewerName,
+          anchorText,
+          anchorPrefix,
+          anchorSuffix,
+          anchorSectionId,
+          publicUploadAuth.id
+        ]
       );
 
       res.status(201).json({
@@ -649,6 +696,67 @@ export function createApp(): express.Express {
         ok: true,
         answer: answerToApi(answerResult.rows[0], version.version_number)
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/drafts/:draftId/questions/:questionId", requireAuth, async (req, res, next) => {
+    try {
+      const auth = (req as RequestWithAuth).auth;
+      const draftId = routeParam(req.params.draftId);
+      const questionId = routeParam(req.params.questionId);
+      const body = isRecord(req.body) ? req.body : {};
+      const action = cleanText(body.action);
+
+      if (!action || !["resolve", "reopen", "address"].includes(action)) {
+        res.status(400).json({ ok: false, error: "Action must be resolve, reopen, or address." });
+        return;
+      }
+
+      const draft = await findOwnedDraft(pool, draftId, auth.account_id);
+      if (!draft) {
+        res.status(404).json({ ok: false, error: "Draft not found." });
+        return;
+      }
+
+      const question = await findDraftQuestion(questionId, draft.id);
+      if (!question) {
+        res.status(404).json({ ok: false, error: "Question not found." });
+        return;
+      }
+
+      let addressedVersionId: string | null = null;
+      if (action === "address") {
+        const versionNumber = parseRequiredVersionNumber(body.versionNumber);
+        if (!versionNumber) {
+          res.status(400).json({ ok: false, error: "A valid versionNumber is required." });
+          return;
+        }
+        const version = await findDraftVersionByNumber(draft.id, versionNumber);
+        if (!version) {
+          res.status(404).json({ ok: false, error: "Draft version not found." });
+          return;
+        }
+        addressedVersionId = version.id;
+      }
+
+      await pool.query(
+        `
+          UPDATE draft_questions
+          SET resolved_at = CASE WHEN $3 = 'reopen' THEN NULL ELSE now() END,
+              resolved_by_api_key_id = CASE WHEN $3 = 'reopen' THEN NULL ELSE $4 END,
+              addressed_version_id = CASE WHEN $3 = 'address' THEN $5 ELSE NULL END,
+              updated_at = now()
+          WHERE id = $1
+            AND draft_id = $2
+            AND deleted_at IS NULL
+        `,
+        [question.id, draft.id, action, auth.id, addressedVersionId]
+      );
+
+      const updated = (await listDraftQuestions(draft.id)).find((item) => item.questionId === question.id);
+      res.json({ ok: true, question: updated });
     } catch (error) {
       next(error);
     }
@@ -874,6 +982,14 @@ async function listDraftQuestions(draftId: string): Promise<DraftViewerData["que
       SELECT
         draft_questions.id,
         draft_questions.question_text,
+        draft_questions.reviewer_name,
+        draft_questions.anchor_text,
+        draft_questions.anchor_prefix,
+        draft_questions.anchor_suffix,
+        draft_questions.anchor_section_id,
+        draft_questions.resolved_at,
+        draft_questions.addressed_version_id,
+        addressed_versions.version_number AS addressed_version_number,
         draft_questions.created_at,
         draft_questions.updated_at,
         draft_question_answers.id AS answer_id,
@@ -887,6 +1003,8 @@ async function listDraftQuestions(draftId: string): Promise<DraftViewerData["que
         ON draft_question_answers.question_id = draft_questions.id
       LEFT JOIN draft_versions
         ON draft_versions.id = draft_question_answers.draft_version_id
+      LEFT JOIN draft_versions AS addressed_versions
+        ON addressed_versions.id = draft_questions.addressed_version_id
       WHERE draft_questions.draft_id = $1
         AND draft_questions.deleted_at IS NULL
       ORDER BY draft_questions.created_at ASC
@@ -897,6 +1015,18 @@ async function listDraftQuestions(draftId: string): Promise<DraftViewerData["que
   return result.rows.map((question) => ({
     questionId: question.id,
     questionText: question.question_text,
+    reviewerName: question.reviewer_name,
+    anchor: question.anchor_text
+      ? {
+          text: question.anchor_text,
+          prefix: question.anchor_prefix || "",
+          suffix: question.anchor_suffix || "",
+          sectionId: question.anchor_section_id
+        }
+      : null,
+    resolvedAt: question.resolved_at ? toIso(question.resolved_at) : null,
+    addressedVersionNumber: question.addressed_version_number,
+    addressedVersionId: question.addressed_version_id,
     createdAt: toIso(question.created_at),
     updatedAt: toIso(question.updated_at),
     answer: question.answer_id && question.answer_text && question.answer_version_number && question.answer_version_id
@@ -1040,6 +1170,18 @@ function questionToApi(
   return {
     questionId: question.id,
     questionText: question.question_text,
+    reviewerName: question.reviewer_name,
+    anchor: question.anchor_text
+      ? {
+          text: question.anchor_text,
+          prefix: question.anchor_prefix || "",
+          suffix: question.anchor_suffix || "",
+          sectionId: question.anchor_section_id
+        }
+      : null,
+    resolvedAt: question.resolved_at ? toIso(question.resolved_at) : null,
+    addressedVersionNumber: null,
+    addressedVersionId: question.addressed_version_id,
     createdAt: toIso(question.created_at),
     updatedAt: toIso(question.updated_at),
     answer

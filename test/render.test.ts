@@ -65,7 +65,11 @@ test("renders review Q&A and version controls after the plan content", () => {
   assert.match(rendered, /Copy AI prompt/);
   assert.match(rendered, /Save answer/);
   assert.match(rendered, /Ask a question or suggest a change/);
-  assert.match(rendered, /Add question/);
+  assert.match(rendered, /Add feedback/);
+  assert.match(rendered, /id="reviewer-name"/);
+  assert.match(rendered, /id="selection-context"/);
+  assert.match(rendered, /Addressed in v/);
+  assert.match(rendered, /planlink-feedback-anchor/);
   assert.doesNotMatch(rendered, /Audio run-through/);
   assert.doesNotMatch(rendered, /id="narration-select"/);
   assert.doesNotMatch(rendered, /Owner API key/);
@@ -152,6 +156,16 @@ function reviewFixture(): DraftReviewRenderData {
       {
         questionId: "question_1",
         questionText: "Can we simplify the data model?",
+        reviewerName: "Casey Reviewer",
+        anchor: {
+          text: "simplify the data model",
+          prefix: "Can we ",
+          suffix: "?",
+          sectionId: "data-model"
+        },
+        resolvedAt: null,
+        addressedVersionNumber: null,
+        addressedVersionId: null,
         createdAt: "2026-06-29T01:10:00.000Z",
         updatedAt: "2026-06-29T01:10:00.000Z",
         answer: {

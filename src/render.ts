@@ -46,6 +46,16 @@ export interface DraftReviewVersion {
 export interface DraftReviewQuestion {
   questionId: string;
   questionText: string;
+  reviewerName: string;
+  anchor: {
+    text: string;
+    prefix: string;
+    suffix: string;
+    sectionId: string | null;
+  } | null;
+  resolvedAt: string | null;
+  addressedVersionNumber: number | null;
+  addressedVersionId: string | null;
   createdAt: string;
   updatedAt: string;
   answer: DraftReviewAnswer | null;
@@ -313,6 +323,10 @@ export function renderDraftWrapper({
       width: 100%;
     }
 
+    .review-input {
+      width: 100%;
+    }
+
     .review-textarea {
       resize: vertical;
       min-height: 86px;
@@ -332,6 +346,62 @@ export function renderDraftWrapper({
       background: #ffffff;
       padding: 12px;
       box-sizing: border-box;
+    }
+
+    .question-card[data-resolved="true"] {
+      background: #f7faf7;
+      border-color: #b9cbbb;
+    }
+
+    .selection-context,
+    .question-anchor {
+      border-left: 3px solid #d5902d;
+      background: #fff9e8;
+      color: #3f493f;
+      padding: 8px 10px;
+      font-size: 13px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+
+    .selection-context[hidden] {
+      display: none;
+    }
+
+    .selection-context button,
+    .question-anchor {
+      cursor: pointer;
+    }
+
+    .selection-context button {
+      display: block;
+      margin-top: 6px;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: #174c43;
+      text-decoration: underline;
+    }
+
+    .question-anchor {
+      width: 100%;
+      border-top: 0;
+      border-right: 0;
+      border-bottom: 0;
+      text-align: left;
+      margin: 8px 0;
+    }
+
+    .question-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    ::highlight(planlink-feedback-anchor) {
+      background: rgba(213, 144, 45, 0.32);
+      text-decoration: underline solid rgba(184, 74, 59, 0.75) 2px;
     }
 
     .question-head {
@@ -408,8 +478,14 @@ export function renderDraftWrapper({
     <div class="review-body" id="review-body" hidden>
       <div class="review-tools">
         <div class="question-composer" id="question-composer">
+          <input class="review-input" id="reviewer-name" type="text" maxlength="255" placeholder="Your name">
+          <div class="selection-context" id="selection-context" hidden>
+            <strong>Commenting on:</strong>
+            <span id="selection-text"></span>
+            <button id="selection-clear" type="button">Clear selection</button>
+          </div>
           <textarea class="review-textarea" id="question-text" placeholder="Ask a question or suggest a change"></textarea>
-          <button class="review-action" id="question-save" type="button">Add question</button>
+          <button class="review-action" id="question-save" type="button">Add feedback</button>
         </div>
       </div>
       <div class="question-list" id="question-list"></div>
@@ -420,6 +496,9 @@ export function renderDraftWrapper({
     (function () {
       var state = JSON.parse(document.getElementById("planlink-review-data").textContent || "{}");
       var storageKey = "planlink.ownerApiKey";
+      var reviewerStorageKey = "planlink.reviewerName";
+      var activeAnchor = null;
+      var anchorRanges = {};
       var banner = document.querySelector(".planlink-banner");
       var panel = document.getElementById("planlink-review-panel");
       var toggle = document.getElementById("review-toggle");
@@ -427,6 +506,10 @@ export function renderDraftWrapper({
       var status = document.getElementById("review-status");
       var versionSelect = document.getElementById("review-version-select");
       var composer = document.getElementById("question-composer");
+      var reviewerName = document.getElementById("reviewer-name");
+      var selectionContext = document.getElementById("selection-context");
+      var selectionText = document.getElementById("selection-text");
+      var selectionClear = document.getElementById("selection-clear");
       var questionText = document.getElementById("question-text");
       var questionSave = document.getElementById("question-save");
       var questionList = document.getElementById("question-list");
@@ -449,6 +532,49 @@ export function renderDraftWrapper({
       }
       window.addEventListener("resize", syncShellInsets);
       syncShellInsets();
+
+      try {
+        reviewerName.value = window.localStorage.getItem(reviewerStorageKey) || "";
+      } catch (_error) {}
+
+      function renderActiveAnchor() {
+        selectionContext.hidden = !activeAnchor;
+        selectionText.textContent = activeAnchor ? " “" + activeAnchor.text + "”" : "";
+      }
+
+      function captureSelection() {
+        var selection = window.getSelection();
+        if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+        var range = selection.getRangeAt(0);
+        var container = range.commonAncestorContainer.nodeType === 1
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+        if (!container || panel.contains(container) || (banner && banner.contains(container))) return;
+        var text = selection.toString().replace(/\s+/g, " ").trim().slice(0, 1000);
+        if (!text) return;
+
+        var before = document.createRange();
+        before.selectNodeContents(document.body);
+        before.setEnd(range.startContainer, range.startOffset);
+        var after = document.createRange();
+        after.selectNodeContents(document.body);
+        after.setStart(range.endContainer, range.endOffset);
+        var section = container.closest("[id]");
+        activeAnchor = {
+          text: text,
+          prefix: before.toString().replace(/\s+/g, " ").slice(-200),
+          suffix: after.toString().replace(/\s+/g, " ").slice(0, 200),
+          sectionId: section ? section.id : null
+        };
+        renderActiveAnchor();
+      }
+
+      document.addEventListener("selectionchange", captureSelection);
+      selectionClear.addEventListener("click", function () {
+        activeAnchor = null;
+        renderActiveAnchor();
+        window.getSelection().removeAllRanges();
+      });
 
       function getOwnerKey() {
         try {
@@ -499,25 +625,72 @@ export function renderDraftWrapper({
         renderReview();
       }
 
-      async function apiRequest(url, payload) {
+      async function apiRequest(url, payload, method) {
         var token = getOwnerKey();
         if (!token) throw new Error("Owner access required.");
-        return postJson(url, payload, authHeaders());
+        return postJson(url, payload, authHeaders(), method);
       }
 
       async function publicRequest(url, payload) {
         return postJson(url, payload, { "Content-Type": "application/json" });
       }
 
-      async function postJson(url, payload, headers) {
+      async function postJson(url, payload, headers, method) {
         var response = await fetch(url, {
-          method: "POST",
+          method: method || "POST",
           headers: headers,
           body: JSON.stringify(payload)
         });
         var body = await response.json();
         if (!response.ok) throw new Error(body.error || "Request failed.");
         return body;
+      }
+
+      function findAnchorRange(anchor) {
+        if (!anchor || !anchor.text) return null;
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        var node;
+        while ((node = walker.nextNode())) {
+          var parent = node.parentElement;
+          if (!parent || panel.contains(parent) || (banner && banner.contains(parent))) continue;
+          if (["SCRIPT", "STYLE", "NOSCRIPT"].includes(parent.tagName)) continue;
+          var index = (node.nodeValue || "").indexOf(anchor.text);
+          if (index === -1) continue;
+          var range = document.createRange();
+          range.setStart(node, index);
+          range.setEnd(node, index + anchor.text.length);
+          return range;
+        }
+        return null;
+      }
+
+      function renderHighlights() {
+        anchorRanges = {};
+        if (!("highlights" in CSS) || !("Highlight" in window)) return;
+        var ranges = [];
+        state.questions.forEach(function (question) {
+          var range = findAnchorRange(question.anchor);
+          if (!range) return;
+          anchorRanges[question.questionId] = range;
+          ranges.push(range);
+        });
+        CSS.highlights.delete("planlink-feedback-anchor");
+        if (ranges.length) {
+          CSS.highlights.set("planlink-feedback-anchor", new Highlight(...ranges));
+        }
+      }
+
+      function scrollToQuestionAnchor(question) {
+        var range = anchorRanges[question.questionId] || findAnchorRange(question.anchor);
+        if (range) {
+          var target = range.startContainer.parentElement;
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        if (question.anchor && question.anchor.sectionId) {
+          var section = document.getElementById(question.anchor.sectionId);
+          if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       }
 
       function renderReview() {
@@ -535,6 +708,7 @@ export function renderDraftWrapper({
         setStatus(state.canEdit ? "Owner mode" : "v" + (version ? version.versionNumber : state.selectedVersionNumber));
 
         questionList.textContent = "";
+        renderHighlights();
         if (!state.questions.length) {
           var empty = document.createElement("p");
           empty.className = "review-empty";
@@ -551,6 +725,7 @@ export function renderDraftWrapper({
       function renderQuestion(question) {
         var article = document.createElement("article");
         article.className = "question-card";
+        article.setAttribute("data-resolved", question.resolvedAt ? "true" : "false");
 
         var head = document.createElement("div");
         head.className = "question-head";
@@ -573,8 +748,26 @@ export function renderDraftWrapper({
 
         var meta = document.createElement("div");
         meta.className = "question-meta";
-        meta.textContent = question.answer ? "Answered on v" + question.answer.versionNumber : "Open";
+        var threadStatus = question.addressedVersionNumber
+          ? "Addressed in v" + question.addressedVersionNumber
+          : question.resolvedAt
+            ? "Resolved"
+            : question.answer
+              ? "Open · answered on v" + question.answer.versionNumber
+              : "Open";
+        meta.textContent = (question.reviewerName || "Anonymous reviewer") + " · " + threadStatus;
         article.appendChild(meta);
+
+        if (question.anchor) {
+          var anchorButton = document.createElement("button");
+          anchorButton.className = "question-anchor";
+          anchorButton.type = "button";
+          anchorButton.textContent = "“" + question.anchor.text + "”";
+          anchorButton.addEventListener("click", function () {
+            scrollToQuestionAnchor(question);
+          });
+          article.appendChild(anchorButton);
+        }
 
         if (question.answer) {
           var answer = document.createElement("p");
@@ -614,6 +807,50 @@ export function renderDraftWrapper({
             }
           });
           editor.appendChild(save);
+
+          var actions = document.createElement("div");
+          actions.className = "question-actions";
+
+          var resolution = document.createElement("button");
+          resolution.className = "review-toggle";
+          resolution.type = "button";
+          resolution.textContent = question.resolvedAt ? "Reopen" : "Resolve";
+          resolution.addEventListener("click", async function () {
+            try {
+              await apiRequest(
+                "/api/drafts/" + encodeURIComponent(state.draft.draftId)
+                  + "/questions/" + encodeURIComponent(question.questionId),
+                { action: question.resolvedAt ? "reopen" : "resolve" },
+                "PATCH"
+              );
+              await refreshReview();
+              setStatus(question.resolvedAt ? "Feedback reopened" : "Feedback resolved");
+            } catch (error) {
+              setStatus(error.message || "Could not update feedback");
+            }
+          });
+          actions.appendChild(resolution);
+
+          var addressed = document.createElement("button");
+          addressed.className = "review-save";
+          addressed.type = "button";
+          addressed.textContent = "Addressed in v" + state.selectedVersionNumber;
+          addressed.addEventListener("click", async function () {
+            try {
+              await apiRequest(
+                "/api/drafts/" + encodeURIComponent(state.draft.draftId)
+                  + "/questions/" + encodeURIComponent(question.questionId),
+                { action: "address", versionNumber: state.selectedVersionNumber },
+                "PATCH"
+              );
+              await refreshReview();
+              setStatus("Marked addressed in v" + state.selectedVersionNumber);
+            } catch (error) {
+              setStatus(error.message || "Could not update feedback");
+            }
+          });
+          actions.appendChild(addressed);
+          editor.appendChild(actions);
           article.appendChild(editor);
         }
 
@@ -628,6 +865,8 @@ export function renderDraftWrapper({
           "Plan: " + state.draft.title,
           "Draft URL: " + (version ? version.versionUrl : state.draft.publicUrl),
           "Selected version: v" + state.selectedVersionNumber,
+          "Reviewer: " + (question.reviewerName || "Anonymous reviewer"),
+          question.anchor ? "Selected text: “" + question.anchor.text + "”" : "Selected text: (whole plan)",
           "",
           "Question:",
           question.questionText,
@@ -667,14 +906,23 @@ export function renderDraftWrapper({
 
       questionSave.addEventListener("click", async function () {
         try {
+          var name = reviewerName.value.trim() || "Anonymous reviewer";
+          try {
+            window.localStorage.setItem(reviewerStorageKey, name);
+          } catch (_error) {}
           await publicRequest("/api/drafts/" + encodeURIComponent(state.draft.draftId) + "/questions", {
-            questionText: questionText.value
+            questionText: questionText.value,
+            reviewerName: name,
+            anchor: activeAnchor
           });
           questionText.value = "";
+          activeAnchor = null;
+          renderActiveAnchor();
+          window.getSelection().removeAllRanges();
           await refreshReview();
-          setStatus("Question added");
+          setStatus("Feedback added");
         } catch (error) {
-          setStatus(error.message || "Could not add question");
+          setStatus(error.message || "Could not add feedback");
         }
       });
 

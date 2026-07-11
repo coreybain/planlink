@@ -66,9 +66,9 @@ These commands require a configured API key and only affect drafts owned by that
 
 ## Viewer Behavior
 
-Public PlanLink URLs show the draft inside a sandboxed viewer. Signed-out viewers see a persistent PlanLink banner outside the uploaded document.
+Public PlanLink URLs show a sanitized, server-rendered draft with persistent PlanLink controls. Signed-out viewers see a persistent PlanLink banner.
 
-Each draft also includes a bottom review panel. Viewers can switch between versions, read saved questions and answers, and copy an AI-ready prompt for any question. Owners can unlock the panel with a PlanLink API key, add questions, and save plain-text answers against the selected version.
+Each draft also includes a bottom review panel. Viewers can switch between versions, select plan text, attach named feedback, read saved questions and answers, and copy an AI-ready prompt for any thread. Owners can answer feedback, resolve or reopen threads, and mark feedback as addressed in a selected version.
 
 ## Audio Run-Throughs
 

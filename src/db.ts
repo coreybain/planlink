@@ -104,6 +104,16 @@ export async function initDb(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE draft_questions
+      ADD COLUMN IF NOT EXISTS reviewer_name TEXT NOT NULL DEFAULT 'Anonymous reviewer',
+      ADD COLUMN IF NOT EXISTS anchor_text TEXT,
+      ADD COLUMN IF NOT EXISTS anchor_prefix TEXT,
+      ADD COLUMN IF NOT EXISTS anchor_suffix TEXT,
+      ADD COLUMN IF NOT EXISTS anchor_section_id TEXT,
+      ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS resolved_by_api_key_id TEXT REFERENCES api_keys(id),
+      ADD COLUMN IF NOT EXISTS addressed_version_id TEXT REFERENCES draft_versions(id);
+
     CREATE INDEX IF NOT EXISTS draft_versions_draft_id_idx ON draft_versions(draft_id);
     CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
     CREATE INDEX IF NOT EXISTS draft_questions_draft_id_idx ON draft_questions(draft_id);
