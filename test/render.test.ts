@@ -2,38 +2,40 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { buildAiPrompt, renderDraftWrapper, type DraftReviewRenderData } from "../src/render.js";
 
-test("renders uploaded HTML inside a sandboxed srcdoc iframe", () => {
+test("renders uploaded HTML directly and strips active content", () => {
   const rendered = renderDraftWrapper({
     draft: { id: "abc123def456", title: "Draft <Title>" },
     version: { version_number: 3 },
-    html: `<h1 onclick="alert(1)">Plan</h1>`,
+    html: `<h1 onclick="alert(1)">Plan</h1><script>alert(1)</script>`,
     signedIn: false,
     homeUrl: "https://planlink.example"
   });
 
   assert.match(rendered, /<header class="planlink-banner">/);
-  assert.match(rendered, /sandbox="allow-same-origin allow-top-navigation-by-user-activation"/);
-  assert.match(rendered, /&lt;base href=&quot;about:srcdoc&quot;&gt;/);
-  assert.match(rendered, /&lt;h1 onclick=&quot;alert\(1\)&quot;&gt;Plan&lt;\/h1&gt;/);
+  assert.match(rendered, /<h1>Plan<\/h1>/);
+  assert.doesNotMatch(rendered, /<iframe/);
+  assert.doesNotMatch(rendered, /onclick=/);
+  assert.doesNotMatch(rendered, /<script>alert\(1\)<\/script>/);
   assert.match(rendered, /Draft &lt;Title&gt;/);
   assert.match(rendered, /draft:abc123def456 version:3/);
 });
 
-test("anchors uploaded HTML to about:srcdoc so TOC fragment links stay inside the iframe", () => {
+test("preserves plan styles and fragment links in the server-rendered document", () => {
   const rendered = renderDraftWrapper({
     draft: { id: "abc123def456", title: "Draft" },
     version: { version_number: 1 },
-    html: `<!doctype html><html><head><title>Plan</title></head><body><a href="#scope">Scope</a><h2 id="scope">Scope</h2></body></html>`,
+    html: `<!doctype html><html lang="en" class="theme"><head><title>Plan</title><style>.plan { color: red; }</style></head><body class="plan"><a href="#scope">Scope</a><h2 id="scope">Scope</h2></body></html>`,
     signedIn: false
   });
 
-  const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
-  assert.match(srcdoc, /&lt;head&gt;&lt;base href=&quot;about:srcdoc&quot;&gt;/);
-  assert.match(srcdoc, /href=&quot;#scope&quot;/);
-  assert.doesNotMatch(srcdoc, /href=&quot;#scope&quot; target=&quot;_top&quot;/);
+  assert.match(rendered, /<html lang="en" class="theme">/);
+  assert.match(rendered, /<body class="plan">/);
+  assert.match(rendered, /<style>\.plan \{ color: red; \}<\/style>/);
+  assert.match(rendered, /href="#scope"/);
+  assert.doesNotMatch(rendered, /about:srcdoc/);
 });
 
-test("opens plan links in the top-level page instead of nesting another PlanLink wrapper", () => {
+test("renders plan links in the top-level document", () => {
   const rendered = renderDraftWrapper({
     draft: { id: "abc123def456", title: "Draft" },
     version: { version_number: 1 },
@@ -44,15 +46,12 @@ test("opens plan links in the top-level page instead of nesting another PlanLink
     signedIn: false
   });
 
-  const srcdoc = rendered.match(/srcdoc="([^"]+)"/)?.[1] || "";
-  assert.match(srcdoc, /href=&quot;https:\/\/planlink\.example\/d\/next-plan&quot; target=&quot;_top&quot;/);
-  assert.match(srcdoc, /href=&quot;\/d\/another-plan&quot; target=&quot;_top&quot;/);
-  assert.match(rendered, /frameDocument\.addEventListener\("click"/);
-  assert.match(rendered, /destination\.scrollIntoView\(\)/);
-  assert.match(rendered, /window\.location\.href = new URL\(href, window\.location\.href\)\.href/);
+  assert.match(rendered, /href="https:\/\/planlink\.example\/d\/next-plan" target="_top"/);
+  assert.match(rendered, /href="\/d\/another-plan" target="_top"/);
+  assert.doesNotMatch(rendered, /draft-frame/);
 });
 
-test("renders review Q&A and version controls outside the sandboxed iframe", () => {
+test("renders review Q&A and version controls after the plan content", () => {
   const rendered = renderDraftWrapper({
     draft: { id: "abc123def456", title: "Draft" },
     version: { version_number: 2 },
@@ -75,7 +74,7 @@ test("renders review Q&A and version controls outside the sandboxed iframe", () 
   assert.match(rendered, /"selectedVersionNumber":2/);
   assert.match(rendered, /"versionNumber":2/);
   assert.match(rendered, /"versionNumber":1/);
-  assert.ok(rendered.indexOf("draft-frame") < rendered.indexOf("planlink-review-panel"));
+  assert.ok(rendered.indexOf("<p>Plan</p>") < rendered.indexOf("planlink-review-panel"));
 });
 
 test("hides the banner for signed-in viewers", () => {

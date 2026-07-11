@@ -79,6 +79,13 @@ type HtmlElement = DefaultTreeAdapterTypes.Element;
 type HtmlNode = DefaultTreeAdapterTypes.Node;
 type HtmlParentNode = DefaultTreeAdapterTypes.ParentNode;
 
+interface InlineDraftDocument {
+  htmlAttributes: string;
+  headHtml: string;
+  bodyAttributes: string;
+  bodyHtml: string;
+}
+
 export function renderHome({ publicBaseUrl }: { publicBaseUrl: string }): string {
   return htmlPage({
     title: "PlanLink",
@@ -117,7 +124,7 @@ export function renderDraftWrapper({
   const selectedLabel = selectedVersion
     ? `v${selectedVersion.versionNumber}${selectedVersion.isCurrent ? " current" : ""}`
     : `v${Number(version.version_number)}`;
-  const iframeHtml = renderIframeSrcdoc(html);
+  const inlineDocument = renderInlineDraftDocument(html);
   const banner = signedIn
     ? ""
     : `
@@ -129,24 +136,27 @@ export function renderDraftWrapper({
     `;
 
   return `<!doctype html>
-<html lang="en">
+<html${inlineDocument.htmlAttributes || ' lang="en"'}>
 <head>
+  ${inlineDocument.headHtml}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
   <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-      background: #fbfbf8;
-      color: #17201b;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    :root {
+      --planlink-banner-height: ${signedIn ? 0 : 42}px;
+      --planlink-review-height: 54px;
+    }
+
+    html {
+      scroll-padding-top: var(--planlink-banner-height);
     }
 
     body {
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
+      margin: 0;
+      padding-top: var(--planlink-banner-height) !important;
+      padding-bottom: var(--planlink-review-height) !important;
+      box-sizing: border-box;
     }
 
     button,
@@ -161,7 +171,8 @@ export function renderDraftWrapper({
     }
 
     .planlink-banner {
-      position: relative;
+      position: fixed;
+      inset: 0 0 auto;
       z-index: 2147483647;
       display: flex;
       align-items: center;
@@ -174,7 +185,7 @@ export function renderDraftWrapper({
       border-bottom: 1px solid #304039;
       font-size: 14px;
       line-height: 1.3;
-      flex: 0 0 auto;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .planlink-banner strong {
@@ -193,21 +204,15 @@ export function renderDraftWrapper({
       white-space: nowrap;
     }
 
-    .draft-frame {
-      display: block;
-      width: 100%;
-      min-height: 0;
-      flex: 1 1 auto;
-      border: 0;
-      background: #ffffff;
-    }
-
     .review-panel {
-      flex: 0 0 auto;
+      position: fixed;
+      inset: auto 0 0;
+      z-index: 2147483647;
       border-top: 1px solid #d8ddd3;
       background: #f4f5ef;
       box-shadow: 0 -10px 28px rgba(23, 32, 27, 0.08);
       color: #17201b;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .review-bar {
@@ -384,14 +389,9 @@ export function renderDraftWrapper({
     }
   </style>
 </head>
-<body>
+<body${inlineDocument.bodyAttributes}>
   ${banner}
-  <iframe
-    class="draft-frame"
-    title="${title}"
-    sandbox="allow-same-origin allow-top-navigation-by-user-activation"
-    referrerpolicy="no-referrer"
-    srcdoc="${escapeAttribute(iframeHtml)}"></iframe>
+  ${inlineDocument.bodyHtml}
   <section class="review-panel" id="planlink-review-panel" data-open="false">
     <div class="review-bar">
       <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false">
@@ -420,7 +420,7 @@ export function renderDraftWrapper({
     (function () {
       var state = JSON.parse(document.getElementById("planlink-review-data").textContent || "{}");
       var storageKey = "planlink.ownerApiKey";
-      var draftFrame = document.querySelector(".draft-frame");
+      var banner = document.querySelector(".planlink-banner");
       var panel = document.getElementById("planlink-review-panel");
       var toggle = document.getElementById("review-toggle");
       var body = document.getElementById("review-body");
@@ -431,47 +431,24 @@ export function renderDraftWrapper({
       var questionSave = document.getElementById("question-save");
       var questionList = document.getElementById("question-list");
 
-      function bindDraftNavigation() {
-        var frameDocument;
-        try {
-          frameDocument = draftFrame.contentDocument;
-        } catch (_error) {
-          return;
-        }
-        if (!frameDocument || !frameDocument.documentElement) return;
-        if (frameDocument.documentElement.getAttribute("data-planlink-navigation-bound") === "true") return;
-        frameDocument.documentElement.setAttribute("data-planlink-navigation-bound", "true");
-
-        frameDocument.addEventListener("click", function (event) {
-          var target = event.target;
-          if (!target || typeof target.closest !== "function") return;
-          var anchor = target.closest("a[href]");
-          if (!anchor) return;
-
-          var href = (anchor.getAttribute("href") || "").trim();
-          if (!href) return;
-          event.preventDefault();
-
-          if (href.charAt(0) === "#") {
-            var fragment = href.slice(1);
-            try {
-              fragment = decodeURIComponent(fragment);
-            } catch (_error) {}
-            var destination = frameDocument.getElementById(fragment);
-            if (!destination) {
-              var named = frameDocument.getElementsByName(fragment);
-              destination = named.length ? named[0] : null;
-            }
-            if (destination) destination.scrollIntoView();
-            return;
-          }
-
-          window.location.href = new URL(href, window.location.href).href;
-        });
+      function syncShellInsets() {
+        document.documentElement.style.setProperty(
+          "--planlink-banner-height",
+          (banner ? banner.getBoundingClientRect().height : 0) + "px"
+        );
+        document.documentElement.style.setProperty(
+          "--planlink-review-height",
+          panel.getBoundingClientRect().height + "px"
+        );
       }
 
-      draftFrame.addEventListener("load", bindDraftNavigation);
-      bindDraftNavigation();
+      if ("ResizeObserver" in window) {
+        var shellObserver = new ResizeObserver(syncShellInsets);
+        if (banner) shellObserver.observe(banner);
+        shellObserver.observe(panel);
+      }
+      window.addEventListener("resize", syncShellInsets);
+      syncShellInsets();
 
       function getOwnerKey() {
         try {
@@ -722,26 +699,81 @@ export function renderDraftWrapper({
 </html>`;
 }
 
-function renderIframeSrcdoc(html: string): string {
+function renderInlineDraftDocument(html: string): InlineDraftDocument {
   const document = parse5.parse<DefaultTreeAdapterMap>(html);
   const htmlNode = findChildElement(document, "html");
   const head = htmlNode ? findChildElement(htmlNode, "head") : findChildElement(document, "head");
+  const body = htmlNode ? findChildElement(htmlNode, "body") : findChildElement(document, "body");
 
+  sanitizeInlineTree(document);
   setTopLevelAnchorTargets(document);
 
-  if (!head) return `<base href="about:srcdoc">\n${html}`;
-  if (!hasBaseElement(head)) {
-    head.childNodes.unshift({
-      nodeName: "base",
-      tagName: "base",
-      attrs: [{ name: "href", value: "about:srcdoc" }],
-      namespaceURI: "http://www.w3.org/1999/xhtml" as HtmlElement["namespaceURI"],
-      parentNode: head,
-      childNodes: []
-    });
+  if (head) {
+    const keptHeadNodes = head.childNodes.filter((child) => (
+      !("tagName" in child) || !["base", "title"].includes(child.tagName.toLowerCase())
+    ));
+    head.childNodes.splice(0, head.childNodes.length, ...keptHeadNodes);
   }
 
-  return parse5.serialize(document);
+  return {
+    htmlAttributes: htmlNode ? serializeElementAttributes(htmlNode) : "",
+    headHtml: head ? parse5.serialize(head) : "",
+    bodyAttributes: body ? serializeElementAttributes(body) : "",
+    bodyHtml: body ? parse5.serialize(body) : html
+  };
+}
+
+const INLINE_BLOCKED_TAGS = new Set([
+  "script",
+  "form",
+  "iframe",
+  "object",
+  "embed",
+  "applet",
+  "base",
+  "link"
+]);
+
+function sanitizeInlineTree(node: HtmlNode): void {
+  if ("attrs" in node) {
+    const safeAttributes = node.attrs.filter((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = String(attr.value || "").trim();
+      if (name.startsWith("on") || name === "srcdoc") return false;
+      if (["href", "src", "action", "formaction", "poster", "xlink:href"].includes(name)) {
+        const normalized = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+        if (["javascript:", "vbscript:", "file:"].some((protocol) => normalized.startsWith(protocol))) {
+          return false;
+        }
+      }
+      return true;
+    });
+    node.attrs.splice(0, node.attrs.length, ...safeAttributes);
+  }
+
+  if ("childNodes" in node) {
+    const safeChildren = node.childNodes.filter((child) => !shouldRemoveInlineNode(child));
+    node.childNodes.splice(0, node.childNodes.length, ...safeChildren);
+    for (const child of safeChildren) sanitizeInlineTree(child);
+  }
+
+  if ("content" in node) sanitizeInlineTree(node.content);
+}
+
+function shouldRemoveInlineNode(node: HtmlNode): boolean {
+  if (!("tagName" in node)) return false;
+  const tagName = node.tagName.toLowerCase();
+  if (INLINE_BLOCKED_TAGS.has(tagName)) return true;
+  if (tagName !== "meta") return false;
+  return node.attrs.some((attr) => (
+    attr.name.toLowerCase() === "http-equiv" && attr.value.trim().toLowerCase() === "refresh"
+  ));
+}
+
+function serializeElementAttributes(element: HtmlElement): string {
+  return element.attrs
+    .map((attr) => ` ${attr.name}="${escapeAttribute(attr.value)}"`)
+    .join("");
 }
 
 function setTopLevelAnchorTargets(node: HtmlNode): void {
@@ -763,10 +795,6 @@ function findChildElement(node: HtmlParentNode, tagName: string): HtmlElement | 
   return node.childNodes.find((child): child is HtmlElement => (
     "tagName" in child && child.tagName.toLowerCase() === tagName
   ));
-}
-
-function hasBaseElement(node: HtmlParentNode): boolean {
-  return node.childNodes.some((child) => "tagName" in child && child.tagName.toLowerCase() === "base");
 }
 
 export function buildAiPrompt({
